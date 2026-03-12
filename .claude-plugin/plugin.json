@@ -1,0 +1,16 @@
+{
+  "name": "claude-trace",
+  "version": "0.1.0-dev",
+  "description": "Development plugin for contributing to claude-trace — zero-config OTel observability for Claude Agent SDK",
+  "author": {
+    "name": "agentglass contributors",
+    "url": "https://github.com/agentglass/claude-trace"
+  },
+  "homepage": "https://agentglass.dev/claude-trace",
+  "repository": "https://github.com/agentglass/claude-trace",
+  "license": "Apache-2.0",
+  "keywords": ["rust", "observability", "opentelemetry", "claude", "development"],
+  "skills": "./skills/",
+  "agents": "./agents/",
+  "hooks": "./hooks/hooks.json"
+}

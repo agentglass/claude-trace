@@ -1,0 +1,36 @@
+# CODEOWNERS — Automatic review requests for critical paths
+#
+# Syntax: <path> <@user or @org/team>
+# The last matching rule wins for a given file.
+#
+# @agentglass/maintainers must approve changes to:
+# - Semantic convention definitions (breaks existing OTel pipelines if wrong)
+# - Cost calculator (billing correctness)
+# - CI/CD workflows (release process integrity)
+# - Plugin manifest (affects all plugin users)
+#
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: all files require maintainer review
+*                               @agentglass/maintainers
+
+# Semconv: extra scrutiny because renames/removals are breaking changes
+src/semconv.rs                  @agentglass/maintainers
+src/semconv/                    @agentglass/maintainers
+scripts/check_semconv_compat.py @agentglass/maintainers
+site/src/data/semconv.json      @agentglass/maintainers
+
+# Cost calculator: pricing errors have direct financial impact
+src/cost/                       @agentglass/maintainers
+
+# CI/CD workflows: changes here affect the entire release process
+.github/workflows/              @agentglass/maintainers
+.github/CODEOWNERS              @agentglass/maintainers
+
+# Plugin manifest: changes affect all plugin users immediately
+.claude-plugin/                 @agentglass/maintainers
+
+# Security-sensitive: span attribute setting and export
+src/spans/                      @agentglass/maintainers
+src/export/                     @agentglass/maintainers
+src/config/                     @agentglass/maintainers

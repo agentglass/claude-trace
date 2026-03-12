@@ -1,0 +1,36 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "Write|Edit",
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "Check if the file being modified is src/semconv.rs or contains '_semconv' in its path. If yes, verify this change ONLY adds new attributes and does NOT remove or rename any existing claude.* attribute names. If it removes or renames existing attributes, respond with BLOCK and explain the backwards compatibility requirement.",
+          "timeout": 30
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "Write|Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-clippy.sh",
+          "timeout": 60
+        }
+      ]
+    },
+    {
+      "matcher": "Bash(cargo test*)",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/coverage-gate.sh",
+          "timeout": 120
+        }
+      ]
+    }
+  ]
+}
