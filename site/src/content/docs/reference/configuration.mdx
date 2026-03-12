@@ -1,0 +1,270 @@
+---
+title: Configuration Reference
+description: Complete reference for all TraceConfig fields, environment variables, and defaults.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+All configuration for claude-trace is encapsulated in the `TraceConfig` dataclass. Every field can be set programmatically or via an environment variable.
+
+## Quick reference
+
+| Field | Type | Default | Env var |
+|---|---|---|---|
+| `enabled` | bool | `True` | `CLAUDE_TRACE_ENABLED` |
+| `service_name` | str | `"claude-agent"` | `CLAUDE_TRACE_SERVICE_NAME` |
+| `capture_inputs` | bool | `False` | `CLAUDE_TRACE_CAPTURE_INPUTS` |
+| `capture_outputs` | bool | `False` | `CLAUDE_TRACE_CAPTURE_OUTPUTS` |
+| `record_costs` | bool | `True` | `CLAUDE_TRACE_RECORD_COSTS` |
+| `max_attribute_length` | int | `1024` | `CLAUDE_TRACE_MAX_ATTRIBUTE_LEN` |
+| `tracer_provider` | TracerProvider | `None` (global) | programmatic only |
+| `session_id_header` | str | `"x-claude-session-id"` | `CLAUDE_TRACE_SESSION_ID_HEADER` |
+| `span_name_prefix` | str | `"claude"` | `CLAUDE_TRACE_SPAN_NAME_PREFIX` |
+| `propagate_baggage` | bool | `True` | `CLAUDE_TRACE_PROPAGATE_BAGGAGE` |
+
+## Field documentation
+
+### `enabled`
+
+**Type**: `bool`
+**Default**: `True`
+**Env**: `CLAUDE_TRACE_ENABLED` (accepts `true`, `1`, `yes`, `on`)
+
+Master on/off switch for all instrumentation. When `False`, `instrument()` is a complete no-op — no patching occurs and no spans are created. API calls proceed with their original behaviour.
+
+```python
+# Disable tracing
+config = TraceConfig(enabled=False)
+claude_trace.instrument(config=config)
+# Equivalent to not calling instrument() at all
+```
+
+```bash
+# Disable via environment (useful in test environments)
+export CLAUDE_TRACE_ENABLED=false
+```
+
+### `service_name`
+
+**Type**: `str`
+**Default**: `"claude-agent"`
+**Env**: `CLAUDE_TRACE_SERVICE_NAME`
+
+The OTel `service.name` resource attribute added to all spans created by claude-trace. This appears in your tracing backend as the service identifier. Set to something descriptive for your application:
+
+```python
+config = TraceConfig(service_name="billing-agent-prod")
+```
+
+```bash
+export CLAUDE_TRACE_SERVICE_NAME="billing-agent-prod"
+```
+
+<Aside type="note">
+  If you configure a `TracerProvider` with a `Resource` that already has `service.name` set, the `service_name` in `TraceConfig` does not override it. The `TracerProvider`'s resource takes precedence. Use `service_name` only when you're using the default global provider.
+</Aside>
+
+### `capture_inputs`
+
+**Type**: `bool`
+**Default**: `False`
+**Env**: `CLAUDE_TRACE_CAPTURE_INPUTS`
+
+When `True`, stores the full JSON-serialized `messages` list as `claude.turn.input_messages` on each turn span.
+
+**Warning**: This will capture user-supplied content and may include PII. Only enable in environments where you control data retention, have user consent, or are in a debug/development context.
+
+```python
+# Development debugging only
+debug_config = TraceConfig(capture_inputs=True, max_attribute_length=8192)
+```
+
+The value is truncated to `max_attribute_length` characters.
+
+### `capture_outputs`
+
+**Type**: `bool`
+**Default**: `False`
+**Env**: `CLAUDE_TRACE_CAPTURE_OUTPUTS`
+
+When `True`, stores the full JSON-serialized response content list as `claude.turn.output_content` on each turn span.
+
+**Warning**: This stores model-generated text, which may contain summaries or reformulations of sensitive input content.
+
+### `record_costs`
+
+**Type**: `bool`
+**Default**: `True`
+**Env**: `CLAUDE_TRACE_RECORD_COSTS`
+
+When `True`, computes USD cost estimates from token counts and attaches them as `claude.cost.*` attributes to session and turn spans.
+
+Disable this if:
+- Your regulatory environment prohibits storing financial estimates in observability data
+- You want to reduce span attribute count for performance
+- You are using a model not in the pricing table and don't want fallback warnings
+
+```python
+config = TraceConfig(record_costs=False)
+```
+
+### `max_attribute_length`
+
+**Type**: `int`
+**Default**: `1024`
+**Env**: `CLAUDE_TRACE_MAX_ATTRIBUTE_LEN`
+
+Maximum character length for string span attributes. Values longer than this are truncated with a `...` suffix.
+
+Applies to:
+- `claude.turn.input_messages` (when `capture_inputs=True`)
+- `claude.turn.output_content` (when `capture_outputs=True`)
+- `claude.turn.error_message`
+- `claude.tool.error_message`
+- Any other string attribute
+
+```python
+# Shorter for production (less data egress cost)
+config = TraceConfig(max_attribute_length=512)
+
+# Longer for debugging
+config = TraceConfig(max_attribute_length=4096)
+```
+
+### `tracer_provider`
+
+**Type**: `Optional[TracerProvider]`
+**Default**: `None` (uses the globally registered OTel provider)
+**Env**: not supported (programmatic only)
+
+When `None`, claude-trace uses `opentelemetry.trace.get_tracer_provider()` — the globally registered provider. When set to a specific `TracerProvider` instance, all spans created by claude-trace (and sessions) will use that provider.
+
+Use this when:
+- You have multiple `TracerProvider` instances (one per service)
+- You want claude-trace spans to go to a different backend than other spans in your app
+- You want complete control in tests (use `InMemorySpanExporter`)
+
+```python
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+test_exporter = InMemorySpanExporter()
+test_provider = TracerProvider()
+test_provider.add_span_processor(SimpleSpanProcessor(test_exporter))
+
+config = TraceConfig(tracer_provider=test_provider)
+claude_trace.instrument(config=config)
+```
+
+### `session_id_header`
+
+**Type**: `str`
+**Default**: `"x-claude-session-id"`
+**Env**: `CLAUDE_TRACE_SESSION_ID_HEADER`
+
+HTTP header name from which to read a session ID via OTel baggage. When this header is present in the current OTel context's baggage, its value is used as the session ID automatically.
+
+This enables passing a session ID from an HTTP request through to the claude-trace session without manually threading it through function calls.
+
+```python
+# If your HTTP framework sets OTel baggage from request headers:
+config = TraceConfig(session_id_header="x-my-session-id")
+```
+
+### `span_name_prefix`
+
+**Type**: `str`
+**Default**: `"claude"`
+**Env**: `CLAUDE_TRACE_SPAN_NAME_PREFIX`
+
+Prefix for all span names. Default span names are `claude.session`, `claude.turn`, and `claude.tool`. Changing this lets two differently-configured claude-trace instances coexist without span name collisions.
+
+```python
+# If you have two agent subsystems:
+billing_config = TraceConfig(span_name_prefix="claude.billing")
+support_config = TraceConfig(span_name_prefix="claude.support")
+# Produces spans named "claude.billing.session", "claude.support.session", etc.
+```
+
+### `propagate_baggage`
+
+**Type**: `bool`
+**Default**: `True`
+**Env**: `CLAUDE_TRACE_PROPAGATE_BAGGAGE`
+
+When `True`, propagates W3C TraceContext and Baggage from the current OTel context into each API call's attributes. This allows linking claude-trace spans to existing distributed traces (e.g., from an HTTP request that triggered the agent).
+
+## Complete example
+
+```python
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.resources import Resource
+import claude_trace
+from claude_trace.config import TraceConfig
+
+# Configure a dedicated TracerProvider
+provider = TracerProvider(
+    resource=Resource.create({
+        "service.name": "billing-agent",
+        "service.version": "2.1.0",
+        "deployment.environment": "production",
+    })
+)
+provider.add_span_processor(
+    BatchSpanProcessor(
+        OTLPSpanExporter(endpoint="http://otel-collector:4317"),
+        max_queue_size=2048,
+        max_export_batch_size=512,
+    )
+)
+
+config = TraceConfig(
+    enabled=True,
+    service_name="billing-agent",   # Redundant if using Resource above
+    capture_inputs=False,           # Never capture user messages in prod
+    capture_outputs=False,          # Never capture model responses in prod
+    record_costs=True,
+    max_attribute_length=1024,
+    tracer_provider=provider,
+    span_name_prefix="claude",
+    propagate_baggage=True,
+)
+
+claude_trace.instrument(config=config)
+```
+
+## `TraceConfig.replace()`
+
+Create modified copies of a config without mutating the original:
+
+```python
+base = TraceConfig()
+
+# Debug version with full content capture
+debug = base.replace(
+    capture_inputs=True,
+    capture_outputs=True,
+    max_attribute_length=4096,
+)
+
+# Use debug config for a single session
+with claude_trace.session(config=debug) as sess:
+    ...
+```
+
+## Environment variable boolean parsing
+
+Boolean env vars accept: `true`, `1`, `yes`, `on` (case-insensitive) for `True`, and anything else (including empty string) for `False`:
+
+```bash
+CLAUDE_TRACE_ENABLED=true        # True
+CLAUDE_TRACE_ENABLED=1           # True
+CLAUDE_TRACE_ENABLED=yes         # True
+CLAUDE_TRACE_ENABLED=on          # True
+CLAUDE_TRACE_ENABLED=false       # False
+CLAUDE_TRACE_ENABLED=0           # False
+CLAUDE_TRACE_ENABLED=            # False (empty = False)
+```

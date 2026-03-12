@@ -1,0 +1,195 @@
+---
+title: Cost Model Internals
+description: How the cost calculation works — the pricing table, resolution algorithm, CostBreakdown struct, and known limitations.
+---
+
+## Overview
+
+The cost model lives entirely in `src/claude_trace/_cost/calculator.py`. It is a pure-Python, stateless calculator — no network calls, no external data sources. All pricing is hardcoded in a table and updated with each library release.
+
+## The pricing table
+
+Pricing is stored as a list of `ModelPricing` frozen dataclasses:
+
+```python
+@dataclass(frozen=True)
+class ModelPricing:
+    model_id: str           # Exact canonical identifier
+    input_per_million: float
+    output_per_million: float
+    cache_write_per_million: Optional[float]  # defaults to 1.25x input
+    cache_read_per_million: Optional[float]   # defaults to 0.10x input
+```
+
+The table is indexed by `model_id` in `_PRICING_INDEX: dict[str, ModelPricing]` for O(1) lookup.
+
+## Complete pricing table (2026-Q1)
+
+| Model ID | Input $/M | Output $/M | Cache Write $/M | Cache Read $/M |
+|---|---|---|---|---|
+| `claude-opus-4-5` | 15.00 | 75.00 | 18.75 | 1.50 |
+| `claude-opus-4-0` | 15.00 | 75.00 | 18.75 | 1.50 |
+| `claude-sonnet-4-6` | 3.00 | 15.00 | 3.75 | 0.30 |
+| `claude-sonnet-4-6-20251101` | 3.00 | 15.00 | 3.75 | 0.30 |
+| `claude-sonnet-4-5` | 3.00 | 15.00 | 3.75 | 0.30 |
+| `claude-sonnet-4-5-20250514` | 3.00 | 15.00 | 3.75 | 0.30 |
+| `claude-haiku-4-5` | 0.80 | 4.00 | 1.00 | 0.08 |
+| `claude-haiku-4-5-20250514` | 0.80 | 4.00 | 1.00 | 0.08 |
+| `claude-3-5-sonnet-20241022` | 3.00 | 15.00 | 3.75 | 0.30 |
+| `claude-3-5-sonnet-20240620` | 3.00 | 15.00 | 3.75 | 0.30 |
+| `claude-3-5-haiku-20241022` | 0.80 | 4.00 | 1.00 | 0.08 |
+| `claude-3-opus-20240229` | 15.00 | 75.00 | 18.75 | 1.50 |
+| `claude-3-sonnet-20240229` | 3.00 | 15.00 | — (derived) | — (derived) |
+| `claude-3-haiku-20240307` | 0.25 | 1.25 | 0.30 | 0.03 |
+| `claude-2.1` | 8.00 | 24.00 | — | — |
+| `claude-2.0` | 8.00 | 24.00 | — | — |
+
+When `cache_write_per_million` or `cache_read_per_million` is `None`, the `effective_cache_write` and `effective_cache_read` properties compute defaults:
+
+```python
+@property
+def effective_cache_write(self) -> float:
+    return self.cache_write_per_million or self.input_per_million * 1.25
+
+@property
+def effective_cache_read(self) -> float:
+    return self.cache_read_per_million or self.input_per_million * 0.10
+```
+
+## Model resolution algorithm
+
+When `calculate(model, ...)` is called with a model string, the resolution happens in four steps:
+
+**Step 1: Exact match**
+```python
+if model in _PRICING_INDEX:
+    return _PRICING_INDEX[model]
+```
+`"claude-sonnet-4-6"` → direct lookup, O(1).
+
+**Step 2: Prefix alias match**
+```python
+_PREFIX_ALIASES = {
+    "claude-opus-4": "claude-opus-4-5",
+    "claude-sonnet-4": "claude-sonnet-4-6",
+    "claude-haiku-4": "claude-haiku-4-5",
+    "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+    ...
+}
+# Sorted by prefix length (longest first) to prefer more specific matches
+for prefix, canonical in sorted(_PREFIX_ALIASES.items(), key=lambda x: -len(x[0])):
+    if model.startswith(prefix):
+        return _PRICING_INDEX[canonical]
+```
+`"claude-sonnet-4-99-future"` → matches `"claude-sonnet-4"` prefix → uses `claude-sonnet-4-6` pricing.
+
+**Step 3: Regex family detection**
+```python
+lower = model.lower()
+if re.search(r"opus", lower):
+    return _PRICING_INDEX["claude-opus-4-5"]
+if re.search(r"sonnet", lower):
+    return _PRICING_INDEX["claude-sonnet-4-6"]
+if re.search(r"haiku", lower):
+    return _PRICING_INDEX["claude-haiku-4-5"]
+```
+`"anthropic.claude-sonnet-v3"` → contains "sonnet" → uses Sonnet 4 pricing.
+
+**Step 4: Fallback**
+```python
+warnings.warn(f"claude-trace: unknown model '{model}', using claude-sonnet-4 pricing as fallback.")
+return _FALLBACK_PRICING  # claude-sonnet-4 pricing
+```
+
+The fallback pricing (`$3.00/$15.00`) is a reasonable middle estimate — not as expensive as opus, not as cheap as haiku.
+
+## The `CostBreakdown` struct
+
+```python
+@dataclass(frozen=True)
+class CostBreakdown:
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    input_cost_usd: float
+    output_cost_usd: float
+    cache_read_cost_usd: float
+    cache_creation_cost_usd: float
+
+    @property
+    def total_usd(self) -> float:
+        return (self.input_cost_usd + self.output_cost_usd +
+                self.cache_read_cost_usd + self.cache_creation_cost_usd)
+
+    @property
+    def total_tokens(self) -> int:
+        return (self.input_tokens + self.output_tokens +
+                self.cache_read_tokens + self.cache_creation_tokens)
+
+    def __add__(self, other: "CostBreakdown") -> "CostBreakdown":
+        """Combine two breakdowns for cumulative session totals."""
+        ...
+
+    def format_summary(self) -> str:
+        """One-line human-readable summary."""
+        ...
+```
+
+`CostBreakdown` is **frozen** — immutable. Addition creates a new instance:
+
+```python
+session_cost = CostBreakdown(model="claude-sonnet-4-6", ...)  # zero totals
+for turn_cost in turn_costs:
+    session_cost = session_cost + turn_cost  # creates new instance each time
+```
+
+This is safe for concurrent reads (the session span reads `sess.cost` while turns might be updating it). In practice, in a single-threaded asyncio event loop, there is no actual concurrency issue.
+
+## How costs accumulate across turns
+
+The `AgentSession` holds a running total:
+
+```python
+# In AgentSession:
+self.cost: CostBreakdown = CostBreakdown(model=model, input_tokens=0, ...)
+
+# In AgentSession.record_turn() — called after each turn:
+self.cost = self.cost + turn_cost
+```
+
+The `+` operator on `CostBreakdown` sums all token counts and cost fields. The `model` field in the accumulated breakdown keeps the session's configured model (not each turn's model), because the session span's cost attributes use the session-level model for pricing context.
+
+## Cost calculation formula
+
+```python
+m = 1_000_000.0  # tokens per million
+
+input_cost    = input_tokens          * pricing.input_per_million  / m
+output_cost   = output_tokens         * pricing.output_per_million / m
+cache_r_cost  = cache_read_tokens     * pricing.effective_cache_read  / m
+cache_w_cost  = cache_creation_tokens * pricing.effective_cache_write / m
+```
+
+Example for `claude-sonnet-4-6` with 5000 input, 800 output, 10000 cache_read, 2000 cache_creation:
+
+```
+input_cost    = 5000    * 3.00   / 1,000,000 = $0.015000
+output_cost   = 800     * 15.00  / 1,000,000 = $0.012000
+cache_r_cost  = 10000   * 0.30   / 1,000,000 = $0.003000
+cache_w_cost  = 2000    * 3.75   / 1,000,000 = $0.007500
+total                                        = $0.037500
+```
+
+## Known limitations
+
+1. **Pricing changes**: Anthropic can change pricing at any time. The table in the library may lag by days to weeks after a pricing update. Always treat `claude.cost.*` attributes as **estimates**, not exact billing amounts. The actual charges come from your Anthropic invoice.
+
+2. **Batch API discount**: The Anthropic Batch API offers a 50% discount on input and output tokens. claude-trace does not currently track whether calls are batch or real-time. If you use the batch API, your actual costs will be approximately 50% of what claude-trace reports.
+
+3. **Fine-tuned models**: Custom fine-tuned model IDs are not in the pricing table. They will fall through to the regex fallback (or full fallback), which may not match your actual pricing tier.
+
+4. **Future model families**: When new model families are released (e.g., "claude-5"), they will fall back to the regex/fallback until the library is updated. Monitor for `UserWarning` messages from claude-trace in your logs.
+
+5. **Token count accuracy**: claude-trace uses the `usage` field from the API response, which is the authoritative count from Anthropic. The token counts are accurate. The pricing applied to those counts is what may be stale.

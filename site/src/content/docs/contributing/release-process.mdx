@@ -1,0 +1,155 @@
+---
+title: Release Process
+description: How claude-trace releases are cut, versioned, and published to PyPI.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+## Who can cut a release
+
+Only maintainers with write access to the GitHub repository and PyPI publishing permissions. Currently this is the core team listed in `pyproject.toml` under `authors`.
+
+If you believe a release is overdue or have a critical bug fix that needs expedited release, open an issue labeled `release-request` with your justification.
+
+## Version policy
+
+claude-trace follows [Semantic Versioning](https://semver.org/):
+
+- **PATCH** (0.1.x): Bug fixes, security fixes, documentation-only changes
+- **MINOR** (0.x.0): New features that are backwards-compatible. New `claude.*` attributes. New configuration options.
+- **MAJOR** (x.0.0): Breaking changes. Attribute renames. Configuration API changes. Required once the library reaches stability.
+
+**Current policy**: No v1.0.0 until:
+1. The public API (`instrument`, `session`, `compare`, `uninstrument`) is stable for 6+ months
+2. All semconv attributes in use are promoted from `experimental` to `stable`
+3. The Rust core implementation is complete (planned)
+
+## Pre-release checklist
+
+Before cutting a release, the maintainer must verify:
+
+- [ ] All CI checks pass on `main` branch
+- [ ] Test coverage is above 85%
+- [ ] `mypy src/` reports no errors
+- [ ] `ruff check src/ tests/` reports no errors
+- [ ] `CHANGELOG.md` is updated with the release notes
+- [ ] Version in `pyproject.toml` matches the tag to be created
+- [ ] `__version__` in `src/claude_trace/__init__.py` matches
+
+## Release steps
+
+<Steps>
+
+1. **Update the changelog**
+
+   Edit `CHANGELOG.md` to move items from `[Unreleased]` to the new version section:
+
+   ```markdown
+   ## [0.2.0] - 2026-04-15
+
+   ### Added
+   - `claude.turn.retry_count` attribute for tracking automatic retries (#42)
+   - Support for `claude-opus-5-0` model pricing (#45)
+
+   ### Fixed
+   - Session span status was incorrectly set to `running` on cancellation (#38)
+
+   ### Changed
+   - `max_attribute_length` default changed from 512 to 1024 (#40)
+   ```
+
+2. **Bump the version**
+
+   Edit `pyproject.toml`:
+   ```toml
+   version = "0.2.0"
+   ```
+
+   And `src/claude_trace/__init__.py`:
+   ```python
+   __version__ = "0.2.0"
+   ```
+
+3. **Commit the version bump**
+
+   ```bash
+   git add pyproject.toml src/claude_trace/__init__.py CHANGELOG.md
+   git commit -m "chore: bump version to 0.2.0"
+   git push origin main
+   ```
+
+4. **Create and push the tag**
+
+   ```bash
+   git tag v0.2.0 -m "Release 0.2.0"
+   git push origin v0.2.0
+   ```
+
+5. **CI builds and publishes**
+
+   The GitHub Actions workflow (`.github/workflows/release.yml`) triggers on tag push and:
+   - Runs the full test suite one final time
+   - Builds the Python wheel with `hatch build`
+   - Publishes to PyPI using the `PYPI_API_TOKEN` secret
+
+6. **Verify the release**
+
+   ```bash
+   # Wait 2-3 minutes for PyPI to process
+   pip install claude-trace==0.2.0
+   python -c "import claude_trace; print(claude_trace.__version__)"
+   # Should print: 0.2.0
+   ```
+
+7. **Create a GitHub Release**
+
+   Go to `https://github.com/claude-trace/claude-trace/releases/new`, select the tag `v0.2.0`, and paste the changelog section for this version as the release notes.
+
+</Steps>
+
+## Hotfix process
+
+For critical bugs (security issues, data-loss bugs):
+
+1. Branch from the latest release tag: `git checkout -b hotfix/0.1.1 v0.1.0`
+2. Apply the minimal fix
+3. Bump the patch version (0.1.0 → 0.1.1)
+4. Get a second maintainer to review
+5. Tag and release following the standard steps above
+6. Merge the fix back to `main` as well
+
+## What happens on tag push (CI)
+
+```yaml
+# .github/workflows/release.yml (conceptual)
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install hatch
+      - run: hatch run test   # Full test suite
+      - run: hatch build      # Builds wheel + sdist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+```
+
+## Verifying a release succeeded
+
+1. `pip install claude-trace==<version>` installs without errors
+2. `python -c "import claude_trace; claude_trace.instrument()"` runs without errors
+3. The tag appears at `https://github.com/claude-trace/claude-trace/tags`
+4. The version appears at `https://pypi.org/project/claude-trace/`
+5. GitHub Release notes are published
+
+<Aside type="caution">
+  Never delete a published PyPI release. If a release has a critical bug, publish a new patch version with the fix. PyPI does not support version deletion for security reasons.
+</Aside>

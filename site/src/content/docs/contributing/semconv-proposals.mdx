@@ -1,0 +1,162 @@
+---
+title: Semconv Proposals
+description: How to propose new claude.* attributes — the naming rules, RFC process, and backwards compatibility guarantees.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+The `claude.*` semantic conventions are the most important part of claude-trace. They define a shared vocabulary that allows consistent dashboards, alerts, and queries across all applications that use claude-trace. Every new attribute deserves careful consideration.
+
+## Why the RFC process exists
+
+Adding a new attribute seems trivial — it's just a string constant. But once an attribute is in a release:
+
+1. Users build dashboards that query it
+2. Alerting rules reference it
+3. Log parsers extract it
+4. Export pipelines transform it
+
+Changing the name or type after release breaks all of the above. We take naming seriously because **stability is a feature**.
+
+## Naming rules
+
+All attribute names must follow this structure: `claude.{category}.{name}`
+
+### Category rules
+
+| Category | Used for |
+|---|---|
+| `session` | Attributes on the root session span |
+| `turn` | Attributes on each LLM API call span |
+| `tool` | Attributes on each tool invocation span |
+| `cost` | Financial cost breakdown (on session and turn spans) |
+
+### Name rules
+
+1. **Lowercase only**: `claude.turn.input_tokens`, not `claude.turn.InputTokens`
+2. **Underscores for word separation**: `time_to_first_token_ms`, not `ttft-ms` or `timeToFirstTokenMs`
+3. **Suffix type hints for clarity**:
+   - `_ms` for milliseconds: `latency_ms`, `time_to_first_token_ms`
+   - `_bytes` for byte counts: `input_size_bytes`, `output_size_bytes`
+   - `_usd` for US dollar amounts: `cost_usd`, `total_usd`
+   - `_tokens` for token counts: `input_tokens`, `output_tokens`
+   - `_hash` for hash digests: `input_hash`, `system_prompt_hash`
+4. **No abbreviations unless universally understood**: `id` (ok), `ttft` (not ok — use `time_to_first_token_ms`)
+5. **Singular for single values**: `tool_name`, not `tool_names` (unless it really is a list)
+
+## What makes a good attribute
+
+A good new attribute satisfies all three criteria:
+
+1. **Stable identifier**: The value is deterministic and the same across environments. Not process IDs, not timestamps, not random values.
+
+2. **Measurable**: The value is extractable from what the library already observes. We should not need new API calls or expensive computation to get it.
+
+3. **Useful for querying**: Someone should be able to write a useful OTel query using this attribute. Ask yourself: "What question does this attribute answer that I couldn't answer before?"
+
+### Examples of good attributes
+
+- `claude.turn.stop_reason`: "How often does my agent hit `max_tokens` vs completing normally?" → good, measurable, useful for alerting.
+- `claude.session.total_tool_calls`: "Which sessions used the most tools?" → good, countable, useful for cost analysis.
+- `claude.tool.is_parallel`: "Is my agent taking advantage of parallel tool execution?" → good, observable from response structure, useful for performance analysis.
+
+### Examples of attributes that were not added
+
+- `claude.session.user_message_text`: Too sensitive, duplicates what `capture_inputs` already provides optionally.
+- `claude.turn.prompt_template_name`: Application-level concern, not observable by the library. Use tags instead.
+- `claude.session.agent_framework`: Unknown at the library level; would require user input that is better served by `tags`.
+
+## The RFC process
+
+<Steps>
+
+1. **Open a GitHub Discussion**
+
+   Go to `https://github.com/claude-trace/claude-trace/discussions` and create a new discussion in the **Semconv Proposals** category.
+
+   Title format: `[Semconv Proposal] claude.{category}.{name}: {one-line description}`
+
+   Example: `[Semconv Proposal] claude.turn.retry_count: Number of automatic retries for rate-limited calls`
+
+2. **Fill in the proposal template**
+
+   ```
+   ## Attribute name
+   `claude.turn.retry_count`
+
+   ## Category
+   turn
+
+   ## Type
+   int
+
+   ## Stability
+   experimental
+
+   ## Description
+   Number of automatic retries performed before this API call succeeded.
+   Present only when retries > 0. Uses the Anthropic SDK's built-in retry
+   mechanism.
+
+   ## Example value
+   2
+
+   ## Use case
+   Detect when the agent is frequently hitting rate limits.
+   Query: "SELECT avg(claude.turn.retry_count) WHERE retry_count > 0"
+
+   ## Implementation notes
+   The Anthropic SDK emits a `retry` event on the response object.
+   We can count these in the instrumentation wrapper.
+
+   ## Alternatives considered
+   Could add `claude.turn.was_retried: bool` instead of count.
+   Count is more useful for dashboards.
+   ```
+
+3. **Community discussion period**
+
+   The discussion stays open for **at least 7 days**. Maintainers and community members comment on:
+   - Is the name clear and follows conventions?
+   - Is the value observable without new API calls?
+   - Is this better served by an existing attribute or by `tags`?
+   - Are there type or format concerns?
+
+4. **Decision**
+
+   A maintainer marks the discussion as `accepted`, `rejected`, or `needs-revision`. For `accepted`:
+   - The attribute is tagged as `experimental` in the first release
+   - It can be promoted to `stable` after 3+ months with no breaking changes
+
+5. **Implementation**
+
+   The proposer (or a volunteer) opens a PR:
+   - Adds the constant to `src/claude_trace/_semconv/claude.py` with a full docstring
+   - Adds a unit test in `tests/unit/test_semconv.py` verifying the name format
+   - Adds usage in the appropriate `_spans/*.py` file
+   - Updates the [Semantic Conventions reference](/reference/semconv/)
+
+</Steps>
+
+## Backwards compatibility guarantee
+
+**Once an attribute reaches `stable`, we will never:**
+- Remove it
+- Rename it
+- Change its type
+- Change its semantics
+
+We may **add** new attributes at any time. We may **deprecate** stable attributes (still present, but documented as deprecated) when a better replacement exists.
+
+`experimental` attributes may change until promoted to `stable`.
+
+## Fast-track process
+
+For small, obviously-correct additions (e.g., a new enum value for an existing attribute), the RFC discussion period can be shortened to 3 days at a maintainer's discretion. This applies when:
+- The change is additive (new enum value, not a rename)
+- The attribute already exists as `experimental`
+- There is a clear, unambiguous implementation
+
+<Aside type="tip">
+  The best way to get a proposal accepted quickly is to include a real-world use case and a concrete query example. Abstract attribute descriptions ("tracks the model state") are harder to evaluate than concrete ones ("enables this Honeycomb query that detects runaway agents").
+</Aside>

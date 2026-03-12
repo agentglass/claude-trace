@@ -1,0 +1,265 @@
+---
+title: Testing Guide
+description: How to write, run, and interpret tests for claude-trace. Covers unit tests, integration tests, and the coverage requirements.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Test philosophy
+
+claude-trace follows strict TDD: **RED → GREEN → REFACTOR**.
+
+1. Write a failing test that describes the behavior you want
+2. Write the minimum code to make it pass
+3. Refactor for clarity while keeping tests green
+
+Tests are the specification. If behavior is not tested, it is not guaranteed.
+
+## Test structure
+
+```
+tests/
+└── unit/
+    ├── __init__.py
+    ├── test_semconv.py         # Attribute name format and uniqueness tests
+    └── test_cost_calculator.py # Pricing math and model resolution tests
+```
+
+Currently, all tests are unit tests (no network calls required). This means the full test suite runs in under 1 second.
+
+## Running tests
+
+```bash
+# Run all tests
+pytest
+
+# Run with verbose output
+pytest -v
+
+# Run a specific test file
+pytest tests/unit/test_cost_calculator.py
+
+# Run a specific test function
+pytest tests/unit/test_cost_calculator.py::test_calculate_sonnet4_cost
+
+# Run tests matching a pattern
+pytest -k "cost"
+
+# Run with coverage report
+pytest --cov=claude_trace --cov-report=term-missing
+```
+
+## Writing unit tests
+
+### Test location
+
+All tests live in `tests/unit/`. The test file name mirrors the module name:
+- `src/claude_trace/_cost/calculator.py` → `tests/unit/test_cost_calculator.py`
+- `src/claude_trace/_semconv/claude.py` → `tests/unit/test_semconv.py`
+
+### Testing span creation with in-memory exporter
+
+For tests that verify span attributes without making real API calls:
+
+```python
+import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+import claude_trace
+from claude_trace.config import TraceConfig
+from claude_trace._semconv.claude import SessionAttributes
+
+
+@pytest.fixture
+def in_memory_exporter():
+    """Provides an OTel exporter that keeps spans in memory."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    yield exporter
+    exporter.clear()
+
+
+@pytest.fixture
+def traced_config(in_memory_exporter):
+    """Provides a TraceConfig wired to the in-memory exporter."""
+    provider = in_memory_exporter._spans[0].context if in_memory_exporter._spans else None
+    # Rebuild provider for the fixture
+    exporter = InMemorySpanExporter()
+    p = TracerProvider()
+    p.add_span_processor(SimpleSpanProcessor(exporter))
+    return TraceConfig(tracer_provider=p), exporter
+
+
+def test_session_span_has_session_id(traced_config):
+    config, exporter = traced_config
+
+    with claude_trace.session(config=config) as sess:
+        pass
+
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "claude.session"
+    assert span.attributes[SessionAttributes.SESSION_ID] == sess.session_id
+
+
+def test_session_span_status_completed(traced_config):
+    config, exporter = traced_config
+
+    with claude_trace.session(config=config):
+        pass
+
+    spans = exporter.get_finished_spans()
+    session_span = next(s for s in spans if s.name == "claude.session")
+    assert session_span.attributes[SessionAttributes.STATUS] == "completed"
+
+
+def test_session_span_status_error_on_exception(traced_config):
+    config, exporter = traced_config
+
+    with pytest.raises(ValueError):
+        with claude_trace.session(config=config):
+            raise ValueError("test error")
+
+    spans = exporter.get_finished_spans()
+    session_span = spans[0]
+    assert session_span.attributes[SessionAttributes.STATUS] == "error"
+```
+
+### Testing cost calculations
+
+```python
+from claude_trace._cost.calculator import get_calculator, CostBreakdown
+
+
+class TestCostCalculator:
+    def test_sonnet4_cost_calculation(self):
+        calc = get_calculator()
+        bd = calc.calculate(
+            model="claude-sonnet-4-6",
+            input_tokens=1_000_000,   # 1M input tokens
+            output_tokens=0,
+        )
+        # $3.00 per million input tokens
+        assert bd.input_cost_usd == pytest.approx(3.00, rel=1e-6)
+        assert bd.output_cost_usd == pytest.approx(0.0, abs=1e-9)
+        assert bd.total_usd == pytest.approx(3.00, rel=1e-6)
+
+    def test_cache_read_is_10_percent_of_input(self):
+        calc = get_calculator()
+        regular = calc.calculate("claude-sonnet-4-6", input_tokens=1_000_000)
+        cached = calc.calculate("claude-sonnet-4-6", cache_read_tokens=1_000_000)
+        # Cache read should be 10% of input cost
+        assert cached.cache_read_cost_usd == pytest.approx(
+            regular.input_cost_usd * 0.10, rel=1e-6
+        )
+
+    def test_unknown_model_falls_back_to_sonnet4(self):
+        calc = get_calculator()
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            bd = calc.calculate("claude-unknown-model-9000", input_tokens=1_000_000)
+        assert len(w) == 1
+        assert "unknown model" in str(w[0].message).lower()
+        # Should use Sonnet 4 pricing ($3.00/M)
+        assert bd.input_cost_usd == pytest.approx(3.00, rel=1e-3)
+```
+
+### Testing async sessions
+
+```python
+import pytest
+import asyncio
+import claude_trace
+from claude_trace.config import TraceConfig
+
+
+@pytest.mark.asyncio
+async def test_async_session_creates_span(traced_config):
+    config, exporter = traced_config
+
+    async with claude_trace.session(config=config) as sess:
+        pass
+
+    spans = exporter.get_finished_spans()
+    assert any(s.name == "claude.session" for s in spans)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_async_sessions_are_isolated(traced_config):
+    config, exporter = traced_config
+
+    async def run_session(customer_id: str):
+        async with claude_trace.session(customer_id=customer_id, config=config):
+            await asyncio.sleep(0.01)
+
+    await asyncio.gather(
+        run_session("user-1"),
+        run_session("user-2"),
+        run_session("user-3"),
+    )
+
+    spans = exporter.get_finished_spans()
+    session_spans = [s for s in spans if s.name == "claude.session"]
+    customer_ids = {s.attributes.get("claude.session.customer_id") for s in session_spans}
+    assert customer_ids == {"user-1", "user-2", "user-3"}
+```
+
+## Testing semconv attribute names
+
+The `test_semconv.py` file verifies structural properties of all attribute names:
+
+```python
+from claude_trace._semconv.claude import (
+    SessionAttributes, TurnAttributes, ToolAttributes, CostAttributes
+)
+
+def test_all_session_attributes_start_with_claude_session():
+    sa = SessionAttributes()
+    for name in vars(sa.__class__):
+        if not name.startswith('_'):
+            value = getattr(sa, name)
+            if isinstance(value, str):
+                assert value.startswith("claude.session."), (
+                    f"SessionAttributes.{name} = {value!r} does not start with 'claude.session.'"
+                )
+
+def test_no_duplicate_attribute_names():
+    all_attrs = []
+    for cls in [SessionAttributes, TurnAttributes, ToolAttributes, CostAttributes]:
+        instance = cls()
+        for name in vars(cls):
+            if not name.startswith('_'):
+                value = getattr(instance, name)
+                if isinstance(value, str) and '.' in value:
+                    all_attrs.append(value)
+    assert len(all_attrs) == len(set(all_attrs)), "Duplicate attribute names found"
+```
+
+## Coverage requirements
+
+We target **85% line coverage** across the `src/` directory. Check coverage:
+
+```bash
+pytest --cov=claude_trace --cov-report=term-missing --cov-fail-under=85
+```
+
+The `--cov-fail-under=85` flag makes the test run fail if coverage drops below 85%. This is enforced in CI.
+
+Lines that are intentionally not covered (e.g., `TYPE_CHECKING` blocks, abstract method bodies) should be excluded with `# pragma: no cover`.
+
+## CI test matrix
+
+The GitHub Actions CI runs tests on:
+- Python 3.11 on ubuntu-latest
+- Python 3.12 on ubuntu-latest
+- Python 3.11 on macos-latest (sanity check)
+
+All three must pass before a PR can be merged.
+
+<Aside type="tip">
+  pytest-asyncio is configured with `asyncio_mode = "auto"` in `pyproject.toml`, which means you do not need `@pytest.mark.asyncio` on async test functions. All `async def test_*` functions are automatically treated as async tests.
+</Aside>

@@ -1,0 +1,99 @@
+---
+title: Contributing Overview
+description: Welcome to claude-trace contribution. Everything you need to understand the project and make your first contribution.
+---
+
+import { Card, CardGrid, Aside } from '@astrojs/starlight/components';
+
+We're glad you're here. claude-trace is a focused, opinionated library with a small surface area — which means every contribution matters and every contributor can understand the full codebase in a day.
+
+## Philosophy
+
+**Every contributor should understand every detail.**
+
+claude-trace is not a large framework. It is a ~500-line Python library with a clear, single purpose: emit structured OTel spans for Anthropic API calls. The codebase is deliberately small and well-documented because we believe observability tooling itself must be observable and understandable.
+
+We follow these principles:
+- **No magic**: every code path should be traceable by a reader unfamiliar with the codebase
+- **No dependencies beyond the necessary**: anthropic SDK + opentelemetry-api + opentelemetry-sdk
+- **Explicit over implicit**: explicit `TraceConfig` passed through, not global mutable state hidden in module globals
+- **Privacy by default**: `capture_inputs=False`, `capture_outputs=False` — never surprise users with data capture
+
+## What the codebase contains
+
+```
+src/claude_trace/
+├── __init__.py               # Public API: instrument(), session(), compare()
+├── config.py                 # TraceConfig dataclass + env var parsing
+├── context.py                # contextvars-based session propagation
+├── _semconv/
+│   └── claude.py             # All claude.* attribute name constants + enums
+├── _spans/
+│   ├── session.py            # AgentSession context manager + root span
+│   ├── turn.py               # AgentTurn + turn span lifecycle
+│   ├── tool.py               # ToolInvocation + tool span lifecycle
+│   └── attributes.py         # Re-exports of semconv constants
+├── _instrumentation/
+│   ├── __init__.py           # instrument() / uninstrument() entry points
+│   ├── sync_client.py        # Monkey-patch for Anthropic.messages.create
+│   └── async_client.py       # Monkey-patch for AsyncAnthropic.messages.create
+├── _cost/
+│   ├── calculator.py         # CostCalculator + pricing table (16 models)
+│   └── __init__.py
+└── _diff/
+    ├── trace_diff.py          # TraceSnapshot + TraceDiff + compare()
+    └── __init__.py
+```
+
+The public API (`instrument`, `session`, `compare`, `uninstrument`) is in `__init__.py`. Everything else is internal (prefixed with `_`).
+
+## How to get help
+
+- **GitHub Discussions** — for questions about design decisions, usage patterns, and ideas
+- **GitHub Issues** — for bugs and concrete feature requests
+- **Pull Requests** — for code contributions; reference the related issue
+
+When asking a question, include:
+1. Your Python version and OS
+2. The exact `claude_trace` version
+3. A minimal code example that demonstrates the problem
+4. The full stack trace if there is an error
+
+## Quick orientation for new contributors
+
+<CardGrid>
+  <Card title="Set up your environment" icon="setting">
+    Follow the [Development Setup](/contributing/development-setup/) guide to get a working environment in under 15 minutes.
+  </Card>
+  <Card title="Run the tests" icon="approve-check-circle">
+    Run `pytest` to verify everything works before making any changes. See the [Testing Guide](/contributing/testing/).
+  </Card>
+  <Card title="Find an issue" icon="magnifier">
+    Look for issues labeled `good first issue` on GitHub. These are well-scoped changes that don't require deep architectural knowledge.
+  </Card>
+  <Card title="Understand the semconv" icon="open-book">
+    The [Semantic Conventions](/reference/semconv/) are the heart of the project. Understand the 50 attributes before making any instrumentation changes.
+  </Card>
+</CardGrid>
+
+## What we need help with
+
+- **New model pricing**: When Anthropic releases new models, update `_cost/calculator.py` and add tests
+- **Framework integrations**: FastAPI, Django, Celery workers — show how to integrate properly
+- **Documentation improvements**: Every guide can be clearer; typos and unclear explanations welcome
+- **Test coverage**: We target 85% coverage; untested code paths are welcome contributions
+- **Async edge cases**: The async instrumentation (`async_client.py`) has complex streaming scenarios that need more tests
+
+## Code of conduct
+
+Be kind. We're building tools for developers, and we hold ourselves to the same standards we'd want in any codebase we maintain.
+
+Specifically:
+- Assume good faith in reviews and discussions
+- Give specific, actionable feedback on PRs
+- If a design decision seems wrong, open a discussion before writing code
+- Attribute ideas and prior art correctly
+
+<Aside type="tip">
+  First-time contributors: the best first PR is a documentation improvement or a new unit test. These require no architectural knowledge and give you a feel for the review process before tackling code changes.
+</Aside>

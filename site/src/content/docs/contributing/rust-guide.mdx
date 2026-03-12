@@ -1,0 +1,202 @@
+---
+title: Rust Contribution Guide
+description: Guide for the future Rust core layer — architecture decisions, conventions, and patterns for when the Rust implementation is added.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+<Aside type="note">
+  The current claude-trace implementation is pure Python. This guide documents the planned Rust core architecture for the future high-performance implementation. If you are contributing to the Python implementation today, see the [Development Setup](/contributing/development-setup/) and [Testing](/contributing/testing/) guides.
+</Aside>
+
+## Why a Rust core (future direction)
+
+The Python implementation of claude-trace is correct and production-ready, but a Rust core is planned for several reasons:
+
+1. **Performance**: Span creation, attribute serialization, and cost calculation in hot paths benefit from zero-overhead Rust implementation. At high volume (thousands of spans/second), Python overhead becomes measurable.
+
+2. **Consistency**: With multiple language bindings (Python via PyO3, TypeScript via wasm-bindgen), a shared Rust core guarantees that the semconv attribute names, cost formulas, and span lifecycle logic are identical across all languages. There is no drift.
+
+3. **Single source of truth for semconv**: The `claude.*` attribute constants would live in Rust and be exported to Python and TypeScript via bindings, rather than being duplicated.
+
+## Planned architecture
+
+```
+rust-core/
+├── Cargo.toml
+├── src/
+│   ├── lib.rs                  # PyO3 + wasm-bindgen entry points
+│   ├── semconv.rs              # claude.* attribute constants
+│   ├── cost.rs                 # CostCalculator + pricing table
+│   ├── span_lifecycle.rs       # Session/Turn/Tool state machines
+│   ├── config.rs               # TraceConfig (Rust-native)
+│   └── diff.rs                 # TraceSnapshot + TraceDiff
+├── python/
+│   └── bindings.rs             # PyO3 bindings
+└── wasm/
+    └── bindings.rs             # wasm-bindgen bindings
+```
+
+## Zero-unsafe policy
+
+The Rust implementation uses `#![deny(unsafe_code)]` at the crate level. No `unsafe` blocks are permitted without:
+
+1. A `// SAFETY:` comment explaining why the unsafe operation is sound
+2. A `// INVARIANT:` comment listing the invariants that must be maintained
+3. A `// REVIEWED:` comment with the reviewer's GitHub handle and date
+
+This mirrors the policy used in the `tokio` and `hyper` projects.
+
+## Clippy configuration (planned)
+
+```toml
+# .clippy.toml
+msrv = "1.75"
+
+# In lib.rs
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::module_name_repetitions,  # Allow e.g. SpanError in spans module
+    clippy::must_use_candidate,       # Too noisy for internal helpers
+)]
+```
+
+## PyO3 patterns
+
+The Python bindings expose the Rust types as Python classes:
+
+```rust
+// python/bindings.rs
+use pyo3::prelude::*;
+use crate::cost::{CostCalculator, CostBreakdown};
+
+#[pyclass]
+pub struct PyCostBreakdown {
+    inner: CostBreakdown,
+}
+
+#[pymethods]
+impl PyCostBreakdown {
+    #[getter]
+    fn total_usd(&self) -> f64 {
+        self.inner.total_usd()
+    }
+
+    #[getter]
+    fn input_tokens(&self) -> u64 {
+        self.inner.input_tokens
+    }
+
+    fn format_summary(&self) -> String {
+        self.inner.format_summary()
+    }
+}
+
+#[pymodule]
+fn _claude_trace_core(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyCostBreakdown>()?;
+    m.add_class::<PyCostCalculator>()?;
+    Ok(())
+}
+```
+
+## wasm-bindgen patterns
+
+```rust
+// wasm/bindings.rs
+use wasm_bindgen::prelude::*;
+use crate::cost::CostCalculator;
+
+#[wasm_bindgen]
+pub struct WasmCostCalculator {
+    inner: CostCalculator,
+}
+
+#[wasm_bindgen]
+impl WasmCostCalculator {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        WasmCostCalculator { inner: CostCalculator::new() }
+    }
+
+    pub fn calculate(
+        &self,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+    ) -> WasmCostBreakdown {
+        WasmCostBreakdown {
+            inner: self.inner.calculate(model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens),
+        }
+    }
+}
+```
+
+## Test structure (Rust)
+
+```rust
+// In src/cost.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sonnet4_input_cost() {
+        let calc = CostCalculator::new();
+        let bd = calc.calculate("claude-sonnet-4-6", 1_000_000, 0, 0, 0);
+        // $3.00 per million input tokens
+        assert!((bd.input_cost_usd - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cache_read_is_10_percent_of_input() {
+        let calc = CostCalculator::new();
+        let regular = calc.calculate("claude-sonnet-4-6", 1_000_000, 0, 0, 0);
+        let cached = calc.calculate("claude-sonnet-4-6", 0, 0, 1_000_000, 0);
+        let ratio = cached.cache_read_cost_usd / regular.input_cost_usd;
+        assert!((ratio - 0.1).abs() < 1e-9);
+    }
+}
+```
+
+Run Rust tests with: `cargo test`
+
+## Building Python bindings with maturin
+
+```bash
+# Install maturin
+pip install maturin
+
+# Development build (faster, no optimization)
+maturin develop
+
+# Release build
+maturin build --release
+```
+
+## Building WASM bindings
+
+```bash
+# Install wasm-pack
+cargo install wasm-pack
+
+# Build for browser
+wasm-pack build --target web --out-dir ../typescript/src/wasm
+
+# Build for Node
+wasm-pack build --target nodejs --out-dir ../typescript/src/wasm
+```
+
+## Common Rust mistakes to avoid in OTel code
+
+1. **Don't clone spans** — OTel spans hold active resources. Clone the `SpanContext` (cheap), not the `Span`.
+
+2. **Don't drop a span before recording attributes** — Always call `span.set_attribute()` before `span.end()`.
+
+3. **Don't use `thread_local!` for session context** — Use `tokio::task_local!` for async context, which correctly inherits from parent tasks.
+
+4. **Don't serialize large values eagerly** — Compute `input_hash` lazily; don't serialize full tool inputs by default.
+
+5. **String attributes in OTel are bounded** — OTel exporters may reject attributes longer than 64KB. Enforce your own truncation.

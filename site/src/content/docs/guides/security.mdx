@@ -1,0 +1,214 @@
+---
+title: Security & Privacy
+description: Exactly what data claude-trace captures by default, how to restrict it further, and GDPR/compliance considerations.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Security and privacy are first-class design concerns in claude-trace. This page documents exactly what data is captured in every mode, how to audit your traces, and how to comply with data protection requirements.
+
+## What is captured by default
+
+By default (`capture_inputs=False, capture_outputs=False`), **no message content is stored in span attributes**. The following table shows every attribute captured with default settings:
+
+### Session span (default capture)
+
+| Attribute | Value type | Notes |
+|---|---|---|
+| `claude.session.id` | `sess_<20hex>` | Auto-generated or caller-supplied. Never contains user data. |
+| `claude.session.model` | model string | e.g. `"claude-sonnet-4-6"`. Not sensitive. |
+| `claude.session.max_turns` | int | Configuration value. Not sensitive. |
+| `claude.session.status` | enum string | `completed`, `error`, etc. Not sensitive. |
+| `claude.session.customer_id` | string | **You supply this.** Use opaque IDs (user UUID), never PII like email. |
+| `claude.session.tags` | comma-separated | **You supply these.** Avoid embedding PII in tags. |
+| `claude.session.system_prompt_hash` | 16 hex chars | SHA-256 of system prompt. The raw text is **never stored**. |
+| `claude.session.system_prompt_length` | int | Character count. Not reversible. |
+| `claude.session.total_turns` | int | Not sensitive. |
+| `claude.session.total_input_tokens` | int | Token counts only. Not sensitive. |
+| `claude.session.total_output_tokens` | int | Token counts only. Not sensitive. |
+| `claude.session.total_cache_read_tokens` | int | Not sensitive. |
+| `claude.session.total_cache_creation_tokens` | int | Not sensitive. |
+| `claude.session.total_cost_usd` | USD string | Derived from token counts × pricing. Not sensitive. |
+| `claude.session.tool_names` | comma-separated | Tool names (e.g. `"bash,read_file"`). Not sensitive. |
+| `claude.session.total_tool_calls` | int | Not sensitive. |
+| `claude.cost.*` | USD strings | Cost breakdown. Not sensitive. |
+
+### Turn span (default capture)
+
+| Attribute | Sensitive? | Notes |
+|---|---|---|
+| `claude.turn.index` | No | Integer index. |
+| `claude.turn.model` | No | Model string from API response. |
+| `claude.turn.stop_reason` | No | `end_turn`, `tool_use`, etc. |
+| `claude.turn.input_tokens` | No | Token count. |
+| `claude.turn.output_tokens` | No | Token count. |
+| `claude.turn.cache_read_tokens` | No | Token count. |
+| `claude.turn.cache_creation_tokens` | No | Token count. |
+| `claude.turn.tool_use_count` | No | Integer count. |
+| `claude.turn.tool_names` | No | Tool names. |
+| `claude.turn.content_block_types` | No | `"text,tool_use"` — no content. |
+| `claude.turn.text_content_length` | No | Character count, not content. |
+| `claude.turn.is_streaming` | No | Boolean. |
+| `claude.turn.request_id` | No | Anthropic `x-request-id`. Not user data. |
+| `claude.turn.latency_ms` | No | Float. |
+| `claude.turn.time_to_first_token_ms` | No | Float. |
+| `claude.turn.error_type` | No | Exception class name. |
+| `claude.turn.error_message` | **Maybe** | Truncated to 500 chars. Error messages *might* echo user input. See below. |
+| `claude.turn.cost_usd` | No | USD string. |
+
+### Tool span (default capture)
+
+| Attribute | Sensitive? | Notes |
+|---|---|---|
+| `claude.tool.use_id` | No | `toolu_XXXX` from Anthropic. |
+| `claude.tool.name` | No | Tool function name. |
+| `claude.tool.turn_index` | No | Integer. |
+| `claude.tool.call_index` | No | Integer. |
+| `claude.tool.input_hash` | No | SHA-256 of input, first 16 hex chars. Not reversible. |
+| `claude.tool.input_size_bytes` | No | Integer byte count. |
+| `claude.tool.output_size_bytes` | No | Integer byte count. |
+| `claude.tool.status` | No | `success`, `error`, etc. |
+| `claude.tool.error_type` | No | Exception class name. |
+| `claude.tool.error_message` | **Maybe** | Truncated error message. May contain file paths or other context. |
+| `claude.tool.latency_ms` | No | Float. |
+| `claude.tool.is_parallel` | No | Boolean. |
+
+<Aside type="caution">
+  **Error messages** (`claude.turn.error_message`, `claude.tool.error_message`) can sometimes contain fragments of user input if the error was triggered by processing user-supplied data. For example, a `FileNotFoundError` on a path constructed from user input would contain that path. If you process sensitive user data, review whether error messages in your application could leak PII.
+</Aside>
+
+## What `capture_inputs` enables
+
+Setting `capture_inputs=True` (or `CLAUDE_TRACE_CAPTURE_INPUTS=true`) adds:
+- `claude.turn.input_messages` — the full JSON-serialized `messages` list passed to `messages.create()`
+
+This includes **all user messages, tool results, and conversation history**. It will typically contain PII if users send personal data. Truncated to `max_attribute_length` (default 1024 chars).
+
+## What `capture_outputs` enables
+
+Setting `capture_outputs=True` (or `CLAUDE_TRACE_CAPTURE_OUTPUTS=true`) adds:
+- `claude.turn.output_content` — the full JSON-serialized response content list
+
+This includes **all model-generated text**, which may include summaries of sensitive input.
+
+## The `customer_id` field: use opaque identifiers
+
+The `customer_id` attribute is a string you supply for cost attribution. It appears verbatim on every session span. **Never use PII here:**
+
+```python
+# BAD: PII in span attribute
+with claude_trace.session(customer_id="alice@example.com"):
+    ...
+
+# GOOD: Opaque identifier
+with claude_trace.session(customer_id="usr_7f4a2b8c9d0e1f2a"):
+    ...
+```
+
+Your OTel backend will store this value in logs and metrics. If you use email addresses, they will appear in your trace backend, dashboards, and any exports.
+
+## Attribute length truncation
+
+All string attributes are truncated at `max_attribute_length` characters (default: 1024), with a `...` suffix added. This applies to:
+- Error messages
+- `capture_inputs` content
+- `capture_outputs` content
+- Any other string attribute exceeding the limit
+
+To change the limit:
+
+```python
+from claude_trace.config import TraceConfig
+claude_trace.instrument(config=TraceConfig(max_attribute_length=512))
+```
+
+Or via environment variable:
+```bash
+export CLAUDE_TRACE_MAX_ATTRIBUTE_LEN=512
+```
+
+## Disabling cost tracking
+
+If your regulatory environment prohibits storing even USD cost estimates in logs:
+
+```python
+from claude_trace.config import TraceConfig
+claude_trace.instrument(config=TraceConfig(record_costs=False))
+```
+
+This removes all `claude.cost.*` attributes and the `claude.session.total_cost_usd` / `claude.turn.cost_usd` attributes.
+
+## Fully disabling tracing
+
+To disable all instrumentation without removing `instrument()` calls from your code:
+
+```bash
+export CLAUDE_TRACE_ENABLED=false
+```
+
+When `enabled=False`, `instrument()` becomes a no-op. All API calls proceed normally with no span creation and no overhead.
+
+## Auditing your traces
+
+To audit exactly what your traces contain, use the `InMemorySpanExporter` to capture spans and inspect them programmatically:
+
+```python
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+import claude_trace
+from claude_trace.config import TraceConfig
+
+exporter = InMemorySpanExporter()
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(exporter))
+claude_trace.instrument(config=TraceConfig(tracer_provider=provider))
+
+# ... run your agent ...
+
+spans = exporter.get_finished_spans()
+for span in spans:
+    print(f"\n=== Span: {span.name} ===")
+    for key, value in (span.attributes or {}).items():
+        print(f"  {key}: {repr(value)}")
+```
+
+Run this in your staging environment with realistic data to confirm no PII is captured before deploying to production.
+
+## GDPR / compliance considerations
+
+### Right to erasure
+
+claude-trace does not store any data itself — it exports spans to your configured backend. If a user exercises their right to erasure, you need to delete their spans from your OTel backend (Jaeger, Grafana, etc.). The `claude.session.customer_id` attribute is your correlation key.
+
+If you use opaque UUIDs as `customer_id`, you can delete them by querying your backend for spans with that attribute value.
+
+### Data residency
+
+Spans are exported to whatever `TracerProvider` you configure. If your users are in the EU and you need EU data residency, configure your OTLP exporter to point at an EU-region collector or backend. claude-trace itself does not make any network calls — it only creates spans.
+
+### What Anthropic retains
+
+claude-trace does not affect what Anthropic retains from your API calls. That is governed by your Anthropic API agreement. claude-trace only captures span *metadata* about your calls (token counts, timing, tool names) — not the content, unless you explicitly enable `capture_inputs` or `capture_outputs`.
+
+### Recommended defaults for GDPR-regulated deployments
+
+```python
+from claude_trace.config import TraceConfig
+
+gdpr_config = TraceConfig(
+    capture_inputs=False,   # never store message content
+    capture_outputs=False,  # never store response content
+    max_attribute_length=512,  # limit error message exposure
+    record_costs=True,      # cost data is not personal data
+)
+claude_trace.instrument(config=gdpr_config)
+
+# Always use opaque IDs for customer_id
+with claude_trace.session(customer_id=user.uuid):
+    ...
+```
+
+<Aside type="tip">
+  When in doubt, run the audit script above in staging and review the output with your data protection officer before enabling `capture_inputs` or `capture_outputs` in production.
+</Aside>

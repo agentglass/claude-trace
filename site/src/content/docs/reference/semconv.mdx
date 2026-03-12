@@ -1,0 +1,103 @@
+---
+title: Semantic Conventions
+description: Complete reference for all claude.* OpenTelemetry span attributes, their types, stability status, and query examples.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import SemconvBrowser from '../../../components/SemconvBrowser.astro';
+
+All span attributes emitted by claude-trace follow the `claude.{category}.{name}` naming pattern. This page documents every attribute, its type, stability status, and example value.
+
+## Naming convention rules
+
+1. All names are **lowercase** dot-separated strings (OTel standard)
+2. Category prefix identifies the span kind: `session`, `turn`, `tool`, or `cost`
+3. Names are **stable identifiers** — once shipped, they never change (we add, never remove or rename)
+4. Boolean attributes are never stored as strings
+5. Monetary values are stored as **strings** (e.g. `"0.04523"`) to prevent float precision loss in backends
+
+## Stability status
+
+- **stable** — will not change in any backward-incompatible way
+- **experimental** — may change before reaching stable; check the changelog
+
+## All attributes
+
+Use the search box to filter by attribute name, span type, or description.
+
+<SemconvBrowser />
+
+## Attribute categories explained
+
+### Session attributes (`claude.session.*`)
+
+Session attributes appear on the root span created by `claude_trace.session()`. They carry cumulative statistics from all turns.
+
+Key attributes:
+- `claude.session.id` — correlation key for looking up a specific session
+- `claude.session.customer_id` — tenant ID for cost attribution queries
+- `claude.session.total_cost_usd` — primary cost metric for billing dashboards
+- `claude.session.system_prompt_hash` — groups sessions by system prompt version without storing PII
+
+### Turn attributes (`claude.turn.*`)
+
+Turn attributes appear on each `messages.create()` call span. They carry per-call metrics.
+
+Key attributes:
+- `claude.turn.stop_reason` — distinguishes normal completion from tool-use loops
+- `claude.turn.latency_ms` — per-call latency for percentile dashboards
+- `claude.turn.time_to_first_token_ms` — streaming TTFT for user experience monitoring
+- `claude.turn.request_id` — Anthropic's `x-request-id` for support ticket correlation
+
+### Tool attributes (`claude.tool.*`)
+
+Tool attributes appear on child spans for each `tool_use` block in a model response.
+
+Key attributes:
+- `claude.tool.name` — which tools are most/least used
+- `claude.tool.status` — error rate per tool
+- `claude.tool.latency_ms` — which tools are slowest
+- `claude.tool.is_parallel` — whether parallel execution is being leveraged
+
+### Cost attributes (`claude.cost.*`)
+
+Cost attributes appear on both session and turn spans when `record_costs=True` (the default).
+
+Key attributes:
+- `claude.cost.total_usd` — primary cost metric
+- `claude.cost.cache_read_usd` — measures prompt caching savings
+- `claude.cost.cache_creation_usd` — measures cache write overhead
+
+## Relationship to OTel GenAI semconv
+
+The [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (`gen_ai.*`) are a parallel standard. claude-trace uses `claude.*` rather than `gen_ai.*` for several reasons:
+
+1. **Specificity**: `claude.*` attributes are specific to Claude's API model (sessions, turns, tool_use blocks). The GenAI semconv is intentionally generic across providers.
+2. **Stability**: We can evolve `claude.*` attributes without waiting for OTel GenAI spec changes.
+3. **Completeness**: We capture ~50 attributes; the GenAI spec covers ~10.
+
+If you need interoperability with generic GenAI tooling, both can coexist. The GenAI attributes (`gen_ai.system=anthropic`, `gen_ai.request.model`, etc.) can be added alongside `claude.*` attributes.
+
+## Querying attributes in your backend
+
+### Jaeger — filter by attribute
+
+In the Jaeger UI, use the "Tags" field: `claude.session.customer_id=acme-corp`
+
+### Honeycomb — aggregate cost
+
+```sql
+CALCULATE SUM(claude.session.total_cost_usd)
+WHERE span.name = "claude.session"
+GROUP BY claude.session.customer_id
+```
+
+### Grafana Explore — latency histogram
+
+```
+{service_name="claude-agent"} | json | unwrap claude_turn_latency_ms
+```
+
+<Aside type="tip">
+  When filtering in your backend, note that dot-separated attribute names are often converted to underscore-separated by collectors and backends. For example, `claude.session.customer_id` may be stored as `claude_session_customer_id` in Prometheus or Grafana Loki. Check your backend's documentation for the exact transformation applied.
+</Aside>

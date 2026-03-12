@@ -1,0 +1,286 @@
+---
+title: Python Integration Guide
+description: Complete guide to integrating claude-trace in Python applications, including async, streaming, FastAPI, and framework integrations.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Auto-instrumentation
+
+The single-line setup:
+
+```python
+import claude_trace
+claude_trace.instrument()
+```
+
+This call monkey-patches two classes in the `anthropic` library:
+- `anthropic.resources.messages.Messages.create` (sync client)
+- `anthropic.resources.messages.AsyncMessages.create` (async client)
+
+Both are patched at the class level (not the instance level), so **all** `Anthropic()` and `AsyncAnthropic()` instances created anywhere in your process are instrumented, including those created in third-party libraries.
+
+Call `instrument()` once at application startup, before any Anthropic clients are created. Calling it multiple times is safe — subsequent calls are no-ops.
+
+## Session context manager
+
+The `claude_trace.session()` context manager creates the root span and makes it available as the parent for all turn spans:
+
+```python
+import claude_trace
+
+with claude_trace.session(
+    model="claude-sonnet-4-6",          # default model for this session
+    system_prompt="You are helpful.",   # stored as hash, never raw
+    max_turns=10,                        # max agentic loop iterations
+    customer_id="user-42",              # for cost attribution
+    tags=["feature-x", "env:prod"],     # arbitrary string labels
+    session_id="my-custom-id",          # override auto-generated UUID
+) as sess:
+    # All messages.create() calls here are children of this session span
+    response = client.messages.create(...)
+
+# After the with block:
+print(sess.session_id)           # the session ID
+print(sess._turn_count)          # how many turns ran
+print(sess.cost.total_usd)       # total estimated cost
+print(sess.cost.input_tokens)    # cumulative input tokens
+```
+
+### Accessing cost data mid-session
+
+The `sess.cost` object is updated after every turn, so you can read it at any point:
+
+```python
+with claude_trace.session() as sess:
+    for i in range(10):
+        resp = client.messages.create(...)
+
+        # Check cost after each turn
+        if sess.cost.total_usd > 0.10:
+            print(f"Cost limit approaching after turn {i}: ${sess.cost.total_usd:.4f}")
+            break
+```
+
+## Async support
+
+The session context manager works identically with `async with`:
+
+```python
+import asyncio
+import anthropic
+import claude_trace
+
+async def run_agent():
+    async_client = anthropic.AsyncAnthropic()
+
+    async with claude_trace.session(customer_id="async-user") as sess:
+        response = await async_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": "Hello!"}],
+        )
+        return response.content[0].text
+
+asyncio.run(run_agent())
+```
+
+Concurrent sessions are fully supported — each `asyncio.Task` inherits its own `contextvars` context, so concurrent sessions do not interfere:
+
+```python
+async def process_user(user_id: str, message: str):
+    async with claude_trace.session(customer_id=user_id) as sess:
+        response = await async_client.messages.create(...)
+        return response.content[0].text
+
+# These run concurrently but each has its own isolated session span
+results = await asyncio.gather(
+    process_user("user-1", "Tell me about Python"),
+    process_user("user-2", "Tell me about Rust"),
+    process_user("user-3", "Tell me about TypeScript"),
+)
+```
+
+## Streaming support
+
+Both streaming APIs are automatically handled:
+
+### `create(stream=True)`
+
+```python
+with claude_trace.session() as sess:
+    stream = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        stream=True,
+        messages=[{"role": "user", "content": "Write a poem."}],
+    )
+    for event in stream:
+        if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
+            print(event.delta.text, end="", flush=True)
+    print()
+    # Turn span ends when the for loop completes (last event consumed)
+```
+
+### `messages.stream()` context manager API
+
+```python
+with claude_trace.session() as sess:
+    with client.messages.stream(
+        model="claude-sonnet-4-6",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": "Tell me a joke."}],
+    ) as stream:
+        for text in stream.text_stream:
+            print(text, end="", flush=True)
+        final_message = stream.get_final_message()
+    print()
+```
+
+For streaming calls, the turn span captures:
+- `claude.turn.is_streaming = true`
+- `claude.turn.time_to_first_token_ms` — milliseconds from request to first `content_block_delta` event
+- `claude.turn.latency_ms` — total time from request to last chunk
+
+## Configuration options
+
+All options can be set programmatically or via environment variables:
+
+```python
+from claude_trace.config import TraceConfig
+from opentelemetry.sdk.trace import TracerProvider
+
+config = TraceConfig(
+    # Master on/off switch (CLAUDE_TRACE_ENABLED)
+    enabled=True,
+
+    # OTel service.name resource attribute (CLAUDE_TRACE_SERVICE_NAME)
+    service_name="billing-agent",
+
+    # Store full input messages as span attributes (CLAUDE_TRACE_CAPTURE_INPUTS)
+    # WARNING: may capture PII. Default: False
+    capture_inputs=False,
+
+    # Store full response text as span attributes (CLAUDE_TRACE_CAPTURE_OUTPUTS)
+    # WARNING: may capture PII. Default: False
+    capture_outputs=False,
+
+    # Compute and attach USD cost attributes (CLAUDE_TRACE_RECORD_COSTS)
+    record_costs=True,
+
+    # Truncate long string attributes to this many chars (CLAUDE_TRACE_MAX_ATTRIBUTE_LEN)
+    max_attribute_length=1024,
+
+    # Use a specific TracerProvider (programmatic only, no env var)
+    tracer_provider=my_provider,
+
+    # HTTP header name for reading session ID from OTel baggage
+    # (CLAUDE_TRACE_SESSION_ID_HEADER)
+    session_id_header="x-claude-session-id",
+
+    # Prefix for all span names (CLAUDE_TRACE_SPAN_NAME_PREFIX)
+    span_name_prefix="claude",
+
+    # Propagate W3C TraceContext + Baggage (CLAUDE_TRACE_PROPAGATE_BAGGAGE)
+    propagate_baggage=True,
+)
+
+claude_trace.instrument(config=config)
+```
+
+### Per-session config override
+
+You can override the global config for a single session:
+
+```python
+debug_config = TraceConfig(
+    capture_inputs=True,
+    capture_outputs=True,
+    max_attribute_length=4096,
+)
+
+with claude_trace.session(config=debug_config) as sess:
+    # This session will capture full message content
+    ...
+```
+
+## Integration with FastAPI
+
+```python
+from fastapi import FastAPI, Request
+import claude_trace
+import anthropic
+from claude_trace.config import TraceConfig
+
+# At startup
+claude_trace.instrument()
+client = anthropic.Anthropic()
+app = FastAPI()
+
+@app.post("/chat")
+async def chat(request: Request, body: dict):
+    user_id = body.get("user_id", "anonymous")
+    message = body.get("message", "")
+
+    # Each HTTP request gets its own traced session
+    async with claude_trace.session(
+        customer_id=user_id,
+        tags=[f"endpoint:chat", f"version:v2"],
+    ) as sess:
+        async_client = anthropic.AsyncAnthropic()
+        response = await async_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": message}],
+        )
+
+    return {
+        "response": response.content[0].text,
+        "session_id": sess.session_id,
+        "cost_usd": sess.cost.total_usd,
+    }
+```
+
+<Aside type="tip">
+  When using FastAPI with `opentelemetry-instrumentation-fastapi`, the FastAPI span becomes the parent of the session span automatically. Your claude-trace session spans will appear nested inside the HTTP request span in your tracing backend.
+</Aside>
+
+## Removing instrumentation
+
+If you need to remove the patches (e.g., in test teardown):
+
+```python
+claude_trace.uninstrument()
+```
+
+This restores the original `Messages.create` and `AsyncMessages.create` methods. Safe to call even if `instrument()` was never called.
+
+## Custom session ID generators
+
+By default, session IDs are `sess_` + 20 random hex chars. If you want to use your own format:
+
+```python
+import uuid
+
+with claude_trace.session(
+    session_id=f"workflow-{uuid.uuid4()}"
+) as sess:
+    ...
+```
+
+Or if you have an existing trace/request ID to correlate with:
+
+```python
+@app.post("/agent")
+async def run_agent(request: Request, body: dict):
+    # Use the HTTP request's trace ID as the session ID
+    from opentelemetry import trace as otel_trace
+    ctx = otel_trace.get_current_span().get_span_context()
+    trace_id = format(ctx.trace_id, '032x')
+
+    async with claude_trace.session(
+        session_id=f"sess_{trace_id[:20]}",
+        customer_id=request.headers.get("X-User-ID"),
+    ) as sess:
+        ...
+```

@@ -1,0 +1,227 @@
+---
+title: Span Lifecycle
+description: The precise lifecycle of every session, turn, and tool span — when they are created, what attributes are set, and when they end.
+---
+
+## Overview
+
+Understanding the span lifecycle is essential for:
+- Debugging why attributes are missing or have unexpected values
+- Writing instrumentation tests that assert on span state
+- Contributing to the `_spans/` module
+
+Three span types exist: **session**, **turn**, and **tool**. Each has a distinct lifecycle.
+
+## Session span lifecycle
+
+```
+claude_trace.session().__enter__()
+│
+├── Generate session_id (UUID or caller-supplied)
+├── tracer.start_span("claude.session")
+├── Set initial attributes:
+│     claude.session.id         = session_id
+│     claude.session.model      = model
+│     claude.session.max_turns  = max_turns
+│     claude.session.status     = "running"
+│     claude.session.customer_id = customer_id (if supplied)
+│     claude.session.tags       = ",".join(tags) (if supplied)
+│     claude.session.system_prompt_hash = sha256(prompt)[:16] (if supplied)
+│     claude.session.system_prompt_length = len(prompt) (if supplied)
+├── Attach span as active OTel context (via context.attach)
+└── RETURN self (session context is active)
+
+[zero or more turns execute here]
+
+claude_trace.session().__exit__(exc_type, exc_val, exc_tb)
+│
+├── Detach OTel context (via context.detach)
+├── Determine final status:
+│     exc_type is None → "completed"
+│     exc_type is not None → "error"
+├── Set final attributes:
+│     claude.session.status                   = final_status
+│     claude.session.total_turns              = _turn_count
+│     claude.session.total_input_tokens       = cost.input_tokens
+│     claude.session.total_output_tokens      = cost.output_tokens
+│     claude.session.total_cache_read_tokens  = cost.cache_read_tokens
+│     claude.session.total_cache_creation_tokens = cost.cache_creation_tokens
+│     claude.session.total_cost_usd           = f"{cost.total_usd:.6f}"
+│     claude.session.tool_names               = ",".join(sorted(_tool_names))
+│     claude.session.total_tool_calls         = _total_tool_calls
+├── If record_costs=True:
+│     claude.cost.input_usd                   = f"{cost.input_cost_usd:.6f}"
+│     claude.cost.output_usd                  = ...
+│     claude.cost.cache_read_usd              = ...
+│     claude.cost.cache_creation_usd          = ...
+│     claude.cost.total_usd                   = ...
+│     claude.cost.model                       = model
+│     claude.cost.pricing_tier                = "standard"
+├── Set OTel span status:
+│     OK → StatusCode.OK
+│     error → StatusCode.ERROR + record_exception(exc_val)
+└── span.end()
+```
+
+### Live attribute updates
+
+The session span is updated mid-lifecycle (while still open) after every turn:
+
+```python
+# In AgentSession.record_turn() — called by AgentTurn._finish()
+self.span.set_attribute(SESSION.TOTAL_TURNS, self._turn_count)
+self.span.set_attribute(SESSION.TOTAL_COST_USD, f"{self.cost.total_usd:.6f}")
+```
+
+This means if your backend supports sampling open spans, you can see the session's current turn count and cost even before the session completes.
+
+## Turn span lifecycle
+
+```
+patched_create(*args, **kwargs) is called
+│
+├── get_current_session() → session (or None)
+├── turn_index = session._turn_count (or 0 if no session)
+├── AgentTurn(turn_index, config, session).__enter__()
+│   ├── tracer.start_as_current_span("claude.turn")
+│   │   (parent = session span, via OTel context)
+│   ├── Set initial attribute:
+│   │     claude.turn.index       = turn_index
+│   │     claude.turn.is_streaming = is_streaming
+│   ├── Record _start_time = time.perf_counter()
+│   └── RETURN (turn span is now the active span)
+│
+├── (optional) If capture_inputs=True:
+│     claude.turn.input_messages = json(messages)[:max_len]
+│
+├── original_create(*args, **kwargs) [actual API call]
+│   ├── For non-streaming → returns Message object immediately
+│   └── For streaming → returns stream object immediately
+│
+[on non-streaming:]
+├── turn.record_response(message)
+│   ├── claude.turn.model            = message.model
+│   ├── claude.turn.stop_reason      = message.stop_reason
+│   ├── claude.turn.input_tokens     = message.usage.input_tokens
+│   ├── claude.turn.output_tokens    = message.usage.output_tokens
+│   ├── claude.turn.cache_read_tokens = usage.cache_read_input_tokens
+│   ├── claude.turn.cache_creation_tokens = usage.cache_creation_input_tokens
+│   ├── claude.turn.tool_use_count   = count(tool_use blocks)
+│   ├── claude.turn.tool_names       = ",".join(tool names)
+│   ├── claude.turn.content_block_types = ",".join(block types)
+│   ├── claude.turn.text_content_length = sum(len(t) for text blocks)
+│   ├── claude.turn.request_id       = response.headers["x-request-id"]
+│   └── If record_costs: compute + set claude.cost.* and claude.turn.cost_usd
+│
+├── _record_tool_spans() → creates child tool spans
+│
+├── turn.__exit__(None, None, None)
+│   ├── claude.turn.latency_ms = (now - _start_time) * 1000
+│   ├── span.set_status(OK)
+│   └── span.end()
+│
+└── session.record_turn(turn_cost, tool_names) [updates session live attributes]
+
+[on error:]
+├── turn.__exit__(exc_type, exc_val, exc_tb)
+│   ├── claude.turn.error_type    = type(exc_val).__name__
+│   ├── claude.turn.error_message = str(exc_val)[:500]
+│   ├── claude.turn.latency_ms    = (now - _start_time) * 1000
+│   ├── span.set_status(ERROR)
+│   ├── span.record_exception(exc_val)
+│   └── span.end()
+```
+
+### Turn span with streaming
+
+For streaming calls, the turn span remains open until the stream is fully consumed:
+
+```
+patched_create() returns _TracedStream (turn span is open)
+│
+caller: for event in stream:
+│   ├── First content event detected
+│   │   └── turn.mark_first_token()
+│   │       claude.turn.time_to_first_token_ms = (now - _start_time) * 1000
+│   └── [remaining events consumed]
+│
+[last event consumed or iteration complete]
+├── _TracedStream.__iter__ catches StopIteration
+├── calls turn.__exit__(None, None, None)
+│   ├── claude.turn.latency_ms = total time
+│   └── span.end()
+└── session.record_turn(...)
+```
+
+## Tool span lifecycle
+
+Tool spans are created after a non-streaming response is received and before the turn span ends. They are children of the turn span (which is currently the active span):
+
+```
+_record_tool_spans(response, turn, config)
+│
+├── content = response.content
+├── tool_blocks = [b for b in content if b.type == "tool_use"]
+├── is_parallel = len(tool_blocks) > 1
+│
+└── for idx, block in enumerate(tool_blocks):
+    │
+    └── ToolInvocation(
+    │       tool_name=block.name,
+    │       tool_use_id=block.id,
+    │       turn_index=turn.turn_index,
+    │       call_index=idx,
+    │       is_parallel=is_parallel,
+    │       tool_input=block.input,
+    │   ).__enter__()
+    │   │
+    │   ├── tracer.start_as_current_span("claude.tool")
+    │   │   (parent = turn span, via OTel context)
+    │   ├── claude.tool.use_id           = tool_use_id
+    │   ├── claude.tool.name             = tool_name
+    │   ├── claude.tool.turn_index       = turn_index
+    │   ├── claude.tool.call_index       = call_index
+    │   ├── claude.tool.input_hash       = sha256(json(input))[:16]
+    │   ├── claude.tool.input_size_bytes = len(json(input).encode())
+    │   └── claude.tool.is_parallel      = is_parallel
+    │
+    └── ).__exit__(None, None, None)
+        ├── claude.tool.status           = "success"
+        ├── span.set_status(OK)
+        └── span.end()
+```
+
+Tool spans created by `_record_tool_spans` are **informational markers** — they record the tool calls the model requested. They do not time actual tool execution (that's application code, outside claude-trace's scope).
+
+For timing actual tool execution, use the `ToolInvocation` context manager in your tool functions directly:
+
+```python
+from claude_trace._spans.tool import ToolInvocation
+
+def my_tool(input_data: dict) -> str:
+    with ToolInvocation(
+        tool_name="my_tool",
+        tool_use_id=input_data.get("tool_use_id", ""),
+        turn_index=0,
+        call_index=0,
+        config=config,
+        parent_turn=None,
+        tool_input=input_data,
+        is_parallel=False,
+    ) as t:
+        result = actually_execute_tool(input_data)
+        # Sets output_size_bytes automatically on exit
+    return result
+```
+
+## Error span states
+
+When an error occurs, the span is set to `StatusCode.ERROR` and `span.record_exception(exc_val)` is called. OTel backends (Jaeger, etc.) display these spans with a red indicator.
+
+The error attributes are stored **in addition to** the normal attributes that were recorded before the error. For example, if a turn gets 1000 input tokens and then errors on output, the span will have both `claude.turn.input_tokens = 1000` and `claude.turn.error_type = "SomeException"`.
+
+## Thread safety
+
+The `AgentSession` object itself is not thread-safe (it has mutable state: `_turn_count`, `_tool_names`, etc.). The intended usage is one session per thread or per asyncio task. If you need multi-threaded access to the same session, add your own locking.
+
+The `contextvars` context is naturally isolated per-thread and per-asyncio-task, so the `get_current_session()` call in the instrumentation wrapper is always thread-safe.

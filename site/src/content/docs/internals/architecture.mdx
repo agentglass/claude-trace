@@ -1,0 +1,166 @@
+---
+title: Architecture
+description: Deep dive into why claude-trace is built the way it is — the instrumentation model, context propagation, and design decisions.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Why monkey-patching?
+
+claude-trace instruments the Anthropic SDK by patching `anthropic.resources.messages.Messages.create` and `AsyncMessages.create` at the class level. This is a deliberate design choice, not a compromise.
+
+The alternative approaches were:
+
+**Option A: Subclass the Anthropic client**
+Users would need to swap `anthropic.Anthropic()` for `claude_trace.Anthropic()`. This requires code changes in every application, breaks if the user already has the client stored, and doesn't work for third-party libraries that create their own clients.
+
+**Option B: Decorate individual `messages.create` calls**
+Users would wrap each call: `claude_trace.traced_create(client, model=..., messages=...)`. This requires changes to every API call and makes it impossible to instrument code you don't own.
+
+**Option C: Class-level monkey-patching (chosen)**
+One `instrument()` call at startup affects all instances of `Anthropic` and `AsyncAnthropic` everywhere in the process. No code changes to the agent logic. Works with third-party libraries. Reversible with `uninstrument()`.
+
+The tradeoff of monkey-patching is that it's more fragile if the Anthropic SDK's internal structure changes. We pin to `anthropic>=0.40.0` and test against the latest version in CI to catch breaking changes early.
+
+## The three-layer model
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 Your agent code                      │
+│    client.messages.create(model=..., messages=[...]) │
+└───────────────────────────┬─────────────────────────┘
+                            │ (patched by instrument())
+┌───────────────────────────▼─────────────────────────┐
+│           claude-trace instrumentation layer         │
+│   ┌─────────────────────────────────────────────┐   │
+│   │  patched_create():                          │   │
+│   │    1. get_current_session() from contextvars │   │
+│   │    2. build AgentTurn, start turn span       │   │
+│   │    3. call original messages.create()        │   │
+│   │    4. record response → turn span attrs      │   │
+│   │    5. create child tool spans                │   │
+│   │    6. end turn span                          │   │
+│   │    7. update session cumulative stats        │   │
+│   └─────────────────────────────────────────────┘   │
+└───────────────────────────┬─────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────┐
+│          Original anthropic.messages.create()        │
+│                  (unchanged)                         │
+└─────────────────────────────────────────────────────┘
+```
+
+## Context propagation via `contextvars`
+
+Python's `contextvars` module provides context-local storage — like thread-local storage, but for both threads and asyncio tasks. A `ContextVar` stores a different value per active context.
+
+claude-trace stores the current `AgentSession` in a `ContextVar`:
+
+```python
+# context.py
+_current_session: ContextVar[Optional["AgentSession"]] = ContextVar(
+    "claude_trace_current_session", default=None
+)
+```
+
+When `claude_trace.session().__enter__()` is called, it sets the session in the current context. When the `with` block exits, `__exit__()` resets it to `None`.
+
+The instrumentation reads `get_current_session()` inside the patched `messages.create`. Because `contextvars` context is inherited by asyncio Tasks from their parent Task, concurrent async sessions naturally each have their own context:
+
+```python
+# Task A's context: _current_session = session_a
+# Task B's context: _current_session = session_b
+# Each inherited from the asyncio.create_task() call
+
+async def run_session_a():
+    async with claude_trace.session() as sess_a:  # sets session in task A's context
+        await client.messages.create(...)         # reads session_a from context
+
+async def run_session_b():
+    async with claude_trace.session() as sess_b:  # sets session in task B's context
+        await client.messages.create(...)         # reads session_b from context
+
+# Safe to run concurrently
+await asyncio.gather(run_session_a(), run_session_b())
+```
+
+This works correctly without any locks or explicit context passing. It's the same mechanism that allows `contextvars.copy_context()` to work across thread pool executors.
+
+## Span hierarchy implementation
+
+The OTel span parent-child relationship is established through the OTel context mechanism, not by explicit parent references.
+
+When `AgentSession._start()` creates the session span, it uses `tracer.start_span(name)`. This does NOT set the span as the active span. It creates a span that is a child of whatever is currently active.
+
+For turn spans, `AgentTurn.__enter__()` creates the turn span using `tracer.start_as_current_span(name)`, which:
+1. Creates the span as a child of the current active span (the session span, if it's the active one)
+2. Sets it as the active span in the current context
+
+Wait — but the session span isn't set as active. How does the hierarchy work?
+
+The session span IS set as active via the OTel context manager:
+
+```python
+# session.py (simplified)
+def _start(self):
+    tracer = trace.get_tracer("claude-trace", ...)
+    # start_span() starts the span but doesn't set it as current
+    self.span = tracer.start_span("claude.session")
+    # We then manually set it as the active span:
+    ctx = trace.set_span_in_context(self.span)
+    self._ctx_token = context.attach(ctx)  # saves token for cleanup
+```
+
+This pattern is what allows all `messages.create()` calls inside the `with` block to create their turn spans as children of the session span.
+
+## Why not `start_as_current_span()`?
+
+`start_as_current_span()` is a context manager — it only works with `with` statements. The session span has a different lifecycle:
+- It starts when `__enter__()` is called
+- It ends when `__exit__()` is called (potentially much later)
+- Between those, many API calls happen
+
+Using `start_span()` + manual context attachment gives us control over the lifetime.
+
+## Streaming span lifecycle
+
+Non-streaming: `patched_create()` → call API → `turn.__exit__()` → turn span ends → tool spans created → session updated. Clean and linear.
+
+Streaming is more complex:
+
+```
+patched_create() called
+  → create turn span
+  → call original messages.create(stream=True)
+  → wrap returned stream in _TracedStream
+  → RETURN _TracedStream to caller (turn span is still open!)
+
+caller iterates: for event in stream:
+  → first content event → mark_first_token()
+  → last event consumed → turn.__exit__() called
+  → turn span ends
+  → session updated
+```
+
+The turn span stays open until the stream is fully consumed. This means:
+- If the user breaks out of the loop early, the turn span stays open until GC
+- If an exception occurs during iteration, `_TracedStream.__iter__` catches it and calls `turn.__exit__(exc_type, exc_val, None)`
+- The `time_to_first_token_ms` attribute requires marking the first token, which happens inside the iteration
+
+## Why OpenTelemetry?
+
+The design decision to emit OTel spans rather than a custom JSON format was deliberate:
+
+1. **Vendor neutrality**: OTel works with every monitoring backend. Users don't have to learn a new format or pay for a new service.
+
+2. **Distributed tracing integration**: When an HTTP request triggers an agent, the agent spans automatically become children of the HTTP span in the same trace. This is seamless with OTel but would require custom work with any other format.
+
+3. **Existing tooling**: Dashboards, alerting, sampling policies, tail-based sampling, query languages — all of this exists for OTel already.
+
+4. **The industry direction**: OTel is the consolidating standard for observability. Building on it now means not having to migrate later.
+
+The tradeoff is that OTel has a non-trivial setup cost (configure a `TracerProvider`, an exporter, etc.). We mitigate this by defaulting to the globally-registered provider, so if the user has OTel set up for other purposes, claude-trace works with zero additional configuration.
+
+<Aside type="note">
+  The semconv (`claude.*` attributes) deliberately does not overlap with the OTel GenAI semconv (`gen_ai.*`). They can coexist. See the [Semantic Conventions reference](/reference/semconv/) for details on the relationship.
+</Aside>

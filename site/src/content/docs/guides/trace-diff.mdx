@@ -1,0 +1,297 @@
+---
+title: Trace Diffing
+description: Detect behavioural regressions between agent versions using the compare() API in pytest.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The `compare()` API lets you structurally diff two agent traces and assert equivalence. It is designed for regression testing: capture a "golden" trace from a known-good agent run, then assert that future runs stay within tolerance.
+
+## Why trace diffing?
+
+When you change a system prompt, upgrade a model, or modify tool implementations, you want to know:
+- Did the agent take more or fewer turns?
+- Did it call different tools?
+- Did the cost increase significantly?
+- Did errors appear that weren't there before?
+
+You *could* assert on the output text, but LLM outputs are non-deterministic. Trace diffing gives you **structural assertions** that are stable even when the exact wording changes.
+
+## The `TraceSnapshot` type
+
+A `TraceSnapshot` captures the observable structure of a completed session without storing any content:
+
+```python
+from claude_trace._diff.trace_diff import TraceSnapshot
+import claude_trace
+
+# After a session completes:
+with claude_trace.session() as sess:
+    # ... run agent ...
+    pass
+
+snapshot = TraceSnapshot.from_session(sess)
+
+# snapshot contains:
+# - session_id, model, final_status
+# - total_turns, total_tool_calls, distinct_tool_names
+# - total_input_tokens, total_output_tokens, total_cost_usd
+# - per-turn details (TurnSnapshot list)
+```
+
+### Saving and loading golden files
+
+```python
+# Save a golden snapshot
+snapshot.save("tests/golden/task_a.json")
+
+# Load it later
+golden = TraceSnapshot.load("tests/golden/task_a.json")
+```
+
+The JSON format is stable — you can commit golden files to your repository and they will deserialize correctly across library versions.
+
+## The `compare()` function
+
+```python
+from claude_trace._diff.trace_diff import compare, TraceSnapshot
+
+diff = compare(golden, actual)
+```
+
+`compare()` returns a `TraceDiff` with every structural difference computed:
+
+```python
+@dataclass
+class TraceDiff:
+    baseline: TraceSnapshot       # the golden/reference
+    candidate: TraceSnapshot      # the new run
+
+    # Turn count
+    turn_count_delta: int         # candidate.total_turns - baseline.total_turns
+
+    # Tool names
+    tool_names_added: set[str]    # tools in candidate but not baseline
+    tool_names_removed: set[str]  # tools in baseline but not candidate
+    tool_call_count_delta: int    # total tool call count difference
+
+    # Tokens
+    input_token_delta: int
+    output_token_delta: int
+    cache_read_token_delta: int
+    cache_creation_token_delta: int
+
+    # Cost
+    cost_delta_usd: float         # positive = candidate cost more
+
+    # Status
+    final_status_changed: bool
+    model_changed: bool
+
+    # Errors
+    errors_introduced: int        # new error turns in candidate
+    errors_resolved: int          # error turns in baseline fixed in candidate
+
+    # Per-turn details
+    turn_diffs: list[TurnDiff]    # per-turn breakdown
+```
+
+## `is_equivalent()` and `assert_equivalent()`
+
+The `is_equivalent()` method checks all structural dimensions with optional tolerance:
+
+```python
+diff = compare(golden, actual)
+
+# Strict equivalence (zero tolerance)
+if diff.is_equivalent():
+    print("Traces are identical in structure")
+
+# With 5% relative tolerance on tokens/cost
+if diff.is_equivalent(rtol=0.05):
+    print("Traces are equivalent within 5% tolerance")
+
+# With absolute token tolerance
+if diff.is_equivalent(rtol=0.0, atol_tokens=50):
+    print("Within 50 tokens of baseline")
+```
+
+For pytest, use `assert_equivalent()` which raises `AssertionError` with a human-readable summary:
+
+```python
+diff.assert_equivalent(rtol=0.10)
+# AssertionError: TraceDiff Summary
+# =================
+#   Baseline session : sess_01a2b3...
+#   Candidate session: sess_04c5d6...
+#
+#   Turns          : 3 → 5  (delta=+2)
+#   Tool calls     : 4 → 7 (delta=+3)
+#   Cost USD       : $0.012400 → $0.018900 (delta=+0.006500)
+#
+#   Tools ADDED    : ['web_search']
+```
+
+## Complete pytest integration
+
+```python
+# tests/test_agent_regression.py
+import pytest
+import anthropic
+import claude_trace
+from claude_trace._diff.trace_diff import TraceSnapshot, compare
+
+
+@pytest.fixture
+def traced_client(tracer_provider):
+    """Anthropic client with in-memory tracing."""
+    claude_trace.instrument()
+    client = anthropic.Anthropic()
+    yield client
+    claude_trace.uninstrument()
+
+
+def run_summarization_task(client) -> claude_trace.AgentSession:
+    """Run the agent task and return the completed session."""
+    with claude_trace.session(
+        model="claude-sonnet-4-6",
+        tags=["test:summarization"],
+    ) as sess:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            messages=[
+                {"role": "user", "content": "Summarize: The quick brown fox jumps over the lazy dog."}
+            ],
+        )
+    return sess
+
+
+class TestSummarizationAgentRegression:
+    """Regression tests for the summarization agent."""
+
+    GOLDEN_FILE = "tests/golden/summarization_task.json"
+
+    def test_turn_count_stable(self, traced_client):
+        """Agent should complete in exactly 1 turn (no tools needed)."""
+        sess = run_summarization_task(traced_client)
+        actual = TraceSnapshot.from_session(sess)
+        golden = TraceSnapshot.load(self.GOLDEN_FILE)
+
+        diff = compare(golden, actual)
+        assert diff.turn_count_delta == 0, (
+            f"Expected {golden.total_turns} turns, got {actual.total_turns}"
+        )
+
+    def test_no_tools_used(self, traced_client):
+        """Summarization should not require tool calls."""
+        sess = run_summarization_task(traced_client)
+        actual = TraceSnapshot.from_session(sess)
+        golden = TraceSnapshot.load(self.GOLDEN_FILE)
+
+        diff = compare(golden, actual)
+        assert diff.tool_names_added == set(), \
+            f"Unexpected tools used: {diff.tool_names_added}"
+        assert actual.total_tool_calls == 0
+
+    def test_cost_within_10_percent(self, traced_client):
+        """Cost should not increase by more than 10%."""
+        sess = run_summarization_task(traced_client)
+        actual = TraceSnapshot.from_session(sess)
+        golden = TraceSnapshot.load(self.GOLDEN_FILE)
+
+        diff = compare(golden, actual)
+        diff.assert_equivalent(rtol=0.10)
+
+    def test_no_errors_introduced(self, traced_client):
+        """No new error turns should appear."""
+        sess = run_summarization_task(traced_client)
+        actual = TraceSnapshot.from_session(sess)
+        golden = TraceSnapshot.load(self.GOLDEN_FILE)
+
+        diff = compare(golden, actual)
+        assert diff.errors_introduced == 0, \
+            f"{diff.errors_introduced} new error turns appeared"
+
+    def test_final_status_completed(self, traced_client):
+        """Session should complete successfully."""
+        sess = run_summarization_task(traced_client)
+        actual = TraceSnapshot.from_session(sess)
+
+        assert actual.final_status == "completed"
+
+
+# To regenerate the golden file:
+# pytest tests/test_agent_regression.py::regenerate_golden --run-golden
+@pytest.mark.skip(reason="Only run manually to regenerate golden files")
+def test_regenerate_golden(traced_client):
+    sess = run_summarization_task(traced_client)
+    snap = TraceSnapshot.from_session(sess)
+    snap.save("tests/golden/summarization_task.json")
+    print(f"Saved golden file: {snap.to_json(indent=2)}")
+```
+
+## CI integration
+
+Add a step to your GitHub Actions workflow:
+
+```yaml
+# .github/workflows/test.yml
+- name: Run regression tests
+  run: |
+    pytest tests/test_agent_regression.py -v \
+      --tb=short \
+      -k "not regenerate_golden"
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    CLAUDE_TRACE_ENABLED: "true"
+    CLAUDE_TRACE_RECORD_COSTS: "true"
+```
+
+<Aside type="caution">
+  Regression tests make real API calls and incur cost. Consider running them only on PR merges to main, not on every push. You can also mock the API for unit tests and run the real regression suite nightly.
+</Aside>
+
+## Per-turn diff analysis
+
+For detailed analysis, inspect individual `TurnDiff` objects:
+
+```python
+diff = compare(golden, actual)
+
+for td in diff.turn_diffs:
+    if td.stop_reason_changed:
+        print(f"Turn {td.turn_index}: stop_reason changed "
+              f"{td.baseline_stop_reason!r} → {td.candidate_stop_reason!r}")
+
+    if td.tool_sequence_changed:
+        print(f"Turn {td.turn_index}: tools added={td.tool_names_added}, "
+              f"removed={td.tool_names_removed}")
+
+    if td.input_token_delta > 500:
+        print(f"Turn {td.turn_index}: input tokens grew by {td.input_token_delta}")
+```
+
+## Human-readable diff summary
+
+For logging or manual review:
+
+```python
+print(diff.summary())
+```
+
+Output:
+```
+TraceDiff Summary
+=================
+  Baseline session : sess_01a2b3c4d5e6f7a8b9c0d1e2
+  Candidate session: sess_04c5d6e7f8a9b0c1d2e3f4a5
+
+  Turns          : 3 → 3  (delta=0)
+  Tool calls     : 4 → 5 (delta=+1)
+  Input tokens   : 5230 → 5890 (delta=+660)
+  Output tokens  : 842 → 901 (delta=+59)
+  Cost USD       : $0.012400 → $0.014230 (delta=+0.001830)
+
+  Turn 1 stop_reason: 'end_turn' → 'tool_use'
+```

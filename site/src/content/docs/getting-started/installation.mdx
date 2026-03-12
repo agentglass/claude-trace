@@ -1,0 +1,140 @@
+---
+title: Installation
+description: How to install claude-trace and verify it is working correctly.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+## System requirements
+
+- **Python 3.11 or newer** — claude-trace uses `contextvars`, `match` statements, and modern type hints that require Python 3.11+.
+- **anthropic SDK 0.40.0 or newer** — the instrumentation patches `anthropic.resources.messages.Messages.create`. Older versions had a different internal structure.
+- **opentelemetry-api 1.25.0 or newer** — claude-trace uses the stable OTel API for span creation and attribute setting.
+
+## Installing the package
+
+<Tabs>
+  <TabItem label="Core only">
+    ```bash
+    pip install claude-trace
+    ```
+    Installs the core library with the Anthropic SDK and OpenTelemetry API/SDK as dependencies. No exporter is included — you will configure your own `TracerProvider`.
+  </TabItem>
+  <TabItem label="With console exporter">
+    ```bash
+    pip install "claude-trace[console]"
+    ```
+    Adds the `rich` library for pretty-printing spans to the terminal during local development. Useful for verifying instrumentation is working before wiring up a backend.
+  </TabItem>
+  <TabItem label="With OTLP exporter">
+    ```bash
+    pip install "claude-trace[otlp]"
+    ```
+    Adds `opentelemetry-exporter-otlp` for sending spans to Grafana Tempo, Jaeger, Honeycomb, Datadog, and any other OTLP-compatible backend.
+  </TabItem>
+  <TabItem label="Full dev environment">
+    ```bash
+    pip install "claude-trace[dev]"
+    ```
+    Installs everything: core library, OTLP exporter, rich console, pytest, pytest-asyncio, mypy, and ruff. Use this when contributing to the project.
+  </TabItem>
+</Tabs>
+
+## Virtual environments
+
+We strongly recommend installing claude-trace in a virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # on Windows: .venv\Scripts\activate
+pip install claude-trace
+```
+
+## Verifying installation
+
+After installing, run this snippet to confirm everything is working:
+
+```python
+import claude_trace
+
+# Check the version
+print(claude_trace.__version__)  # should print "0.1.0" or newer
+
+# Check that instrumentation activates without error
+claude_trace.instrument()
+print("Instrumentation active")
+
+# Check that uninstrumentation works
+claude_trace.uninstrument()
+print("Uninstrumentation successful")
+```
+
+To verify spans are actually being emitted, use the in-memory exporter:
+
+```python
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+import claude_trace
+from claude_trace.config import TraceConfig
+
+# Set up in-memory exporter
+exporter = InMemorySpanExporter()
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+claude_trace.instrument(config=TraceConfig(tracer_provider=provider))
+
+# Make a test session (no real API call needed to see the session span)
+with claude_trace.session(customer_id="test") as sess:
+    pass  # In a real scenario you'd call client.messages.create() here
+
+spans = exporter.get_finished_spans()
+for span in spans:
+    print(f"Span: {span.name}")
+    print(f"  Attributes: {dict(span.attributes)}")
+```
+
+Expected output:
+```
+Span: claude.session
+  Attributes: {'claude.session.id': 'sess_...', 'claude.session.model': 'claude-sonnet-4-6', ...}
+```
+
+## Troubleshooting
+
+### `ModuleNotFoundError: No module named 'claude_trace'`
+
+The package is not installed in the Python environment you're using. Run `pip install claude-trace` and verify with `python -c "import claude_trace; print('ok')"`.
+
+### `ImportError: cannot import name 'Messages' from 'anthropic.resources.messages'`
+
+Your `anthropic` SDK version is too old. Run `pip install --upgrade anthropic`. claude-trace requires `anthropic>=0.40.0`.
+
+### `opentelemetry` version conflicts
+
+claude-trace requires `opentelemetry-api>=1.25.0` and `opentelemetry-sdk>=1.25.0`. If you have older versions pinned:
+
+```bash
+pip install --upgrade "opentelemetry-api>=1.25.0" "opentelemetry-sdk>=1.25.0"
+```
+
+If you cannot upgrade due to other dependencies, pin claude-trace to a version that supports your OTel version and check the changelog.
+
+### Spans are not appearing in my backend
+
+1. **Verify a TracerProvider is configured.** If no provider is registered globally, spans are created but silently discarded. Use `InMemorySpanExporter` as shown above to confirm spans are being emitted.
+
+2. **Check that `instrument()` was called before creating the Anthropic client.** Although claude-trace patches the `Messages` class (not the instance), it's safest to call `instrument()` at module import time before any `anthropic.Anthropic()` calls.
+
+3. **Check your exporter endpoint.** For OTLP, the default gRPC endpoint is `localhost:4317`. The HTTP endpoint is `localhost:4318`. Ensure your collector is running and reachable.
+
+4. **Check for silent exceptions in the exporter.** Wrap your OTel setup in a try/except and check `BatchSpanProcessor` logs.
+
+### `instrument()` is called but costs are all zero
+
+Cost tracking requires the Anthropic API to return usage data in the response. If you're using a mock or stub client, there will be no `usage` field in the response, so costs will be zero. With a real API call, costs will appear on `sess.cost.total_usd`.
+
+<Aside type="tip">
+  You can also set `CLAUDE_TRACE_ENABLED=false` as an environment variable to disable all instrumentation without removing the `instrument()` call from your code. This is useful for running tests that don't need tracing.
+</Aside>

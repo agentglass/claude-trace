@@ -1,0 +1,228 @@
+---
+/**
+ * SemconvBrowser.astro
+ *
+ * A client-side searchable table of all claude.* semconv attributes.
+ * Implements filtering with a plain <input> using vanilla JS.
+ *
+ * Usage in MDX:
+ *   import SemconvBrowser from '../../components/SemconvBrowser.astro'
+ *   <SemconvBrowser />
+ */
+
+const attributes = [
+  // Session attributes
+  { name: "claude.session.id", type: "string", span: "session", stability: "stable", captured: "yes", description: "Unique session identifier (sess_ + 20 hex chars)" },
+  { name: "claude.session.model", type: "string", span: "session", stability: "stable", captured: "yes", description: "Claude model configured for this session" },
+  { name: "claude.session.max_turns", type: "int", span: "session", stability: "stable", captured: "yes", description: "Maximum agentic loop iterations configured" },
+  { name: "claude.session.total_turns", type: "int", span: "session", stability: "stable", captured: "yes", description: "Actual turns executed (set at end)" },
+  { name: "claude.session.status", type: "string", span: "session", stability: "stable", captured: "yes", description: "Final status: completed, error, cancelled, max_turns_reached" },
+  { name: "claude.session.customer_id", type: "string", span: "session", stability: "stable", captured: "if supplied", description: "Optional tenant ID for cost attribution" },
+  { name: "claude.session.tags", type: "string", span: "session", stability: "stable", captured: "if supplied", description: "Comma-separated user-defined tags" },
+  { name: "claude.session.system_prompt_hash", type: "string", span: "session", stability: "stable", captured: "if supplied", description: "SHA-256 of system prompt (first 16 hex chars)" },
+  { name: "claude.session.system_prompt_length", type: "int", span: "session", stability: "stable", captured: "if supplied", description: "Character length of system prompt" },
+  { name: "claude.session.total_input_tokens", type: "int", span: "session", stability: "stable", captured: "yes", description: "Cumulative input tokens across all turns" },
+  { name: "claude.session.total_output_tokens", type: "int", span: "session", stability: "stable", captured: "yes", description: "Cumulative output tokens across all turns" },
+  { name: "claude.session.total_cache_read_tokens", type: "int", span: "session", stability: "stable", captured: "yes", description: "Cumulative cache-read tokens (billed at ~10% rate)" },
+  { name: "claude.session.total_cache_creation_tokens", type: "int", span: "session", stability: "stable", captured: "yes", description: "Cumulative cache-creation tokens (billed at ~125% rate)" },
+  { name: "claude.session.total_cost_usd", type: "string", span: "session", stability: "stable", captured: "yes", description: "Total estimated USD cost (as string to prevent float precision loss)" },
+  { name: "claude.session.tool_names", type: "string", span: "session", stability: "stable", captured: "yes", description: "Comma-separated distinct tool names invoked (sorted)" },
+  { name: "claude.session.total_tool_calls", type: "int", span: "session", stability: "stable", captured: "yes", description: "Total tool invocations across all turns" },
+  // Turn attributes
+  { name: "claude.turn.index", type: "int", span: "turn", stability: "stable", captured: "yes", description: "Zero-based turn index within the session" },
+  { name: "claude.turn.model", type: "string", span: "turn", stability: "stable", captured: "yes", description: "Exact model ID from API response (may differ from session model)" },
+  { name: "claude.turn.stop_reason", type: "string", span: "turn", stability: "stable", captured: "yes", description: "end_turn, max_tokens, tool_use, stop_sequence, or error" },
+  { name: "claude.turn.input_tokens", type: "int", span: "turn", stability: "stable", captured: "yes", description: "Standard input tokens billed for this call" },
+  { name: "claude.turn.output_tokens", type: "int", span: "turn", stability: "stable", captured: "yes", description: "Output tokens billed for this call" },
+  { name: "claude.turn.cache_read_tokens", type: "int", span: "turn", stability: "stable", captured: "yes", description: "Cache-read tokens for this call" },
+  { name: "claude.turn.cache_creation_tokens", type: "int", span: "turn", stability: "stable", captured: "yes", description: "Cache-creation tokens for this call" },
+  { name: "claude.turn.tool_use_count", type: "int", span: "turn", stability: "stable", captured: "yes", description: "Number of tool_use blocks in the model response" },
+  { name: "claude.turn.tool_names", type: "string", span: "turn", stability: "stable", captured: "yes", description: "Comma-separated tool names requested in this turn" },
+  { name: "claude.turn.content_block_types", type: "string", span: "turn", stability: "stable", captured: "yes", description: "Comma-separated content block types in the response" },
+  { name: "claude.turn.text_content_length", type: "int", span: "turn", stability: "stable", captured: "yes", description: "Total character length of all text blocks" },
+  { name: "claude.turn.is_streaming", type: "bool", span: "turn", stability: "stable", captured: "yes", description: "Whether streaming mode was used" },
+  { name: "claude.turn.request_id", type: "string", span: "turn", stability: "stable", captured: "yes", description: "Anthropic x-request-id header value" },
+  { name: "claude.turn.latency_ms", type: "float", span: "turn", stability: "stable", captured: "yes", description: "End-to-end latency in milliseconds" },
+  { name: "claude.turn.time_to_first_token_ms", type: "float", span: "turn", stability: "stable", captured: "streaming only", description: "Milliseconds from request to first token (streaming only)" },
+  { name: "claude.turn.error_type", type: "string", span: "turn", stability: "stable", captured: "on error", description: "Exception class name if API call failed" },
+  { name: "claude.turn.error_message", type: "string", span: "turn", stability: "stable", captured: "on error", description: "Truncated error message (max 500 chars)" },
+  { name: "claude.turn.cost_usd", type: "string", span: "turn", stability: "stable", captured: "yes", description: "Estimated USD cost for this individual turn" },
+  { name: "claude.turn.input_messages", type: "string", span: "turn", stability: "experimental", captured: "capture_inputs=True", description: "Full JSON-serialized input messages (PII risk)" },
+  { name: "claude.turn.output_content", type: "string", span: "turn", stability: "experimental", captured: "capture_outputs=True", description: "Full JSON-serialized response content (PII risk)" },
+  // Tool attributes
+  { name: "claude.tool.use_id", type: "string", span: "tool", stability: "stable", captured: "yes", description: "Anthropic toolu_XXXX identifier for this tool_use block" },
+  { name: "claude.tool.name", type: "string", span: "tool", stability: "stable", captured: "yes", description: "Tool name as defined in the tools parameter" },
+  { name: "claude.tool.turn_index", type: "int", span: "tool", stability: "stable", captured: "yes", description: "Parent turn index (duplicated for flat-tree filtering)" },
+  { name: "claude.tool.call_index", type: "int", span: "tool", stability: "stable", captured: "yes", description: "Zero-based index of this tool call within the turn" },
+  { name: "claude.tool.input_hash", type: "string", span: "tool", stability: "stable", captured: "yes", description: "SHA-256 of JSON-serialized input (first 16 hex chars)" },
+  { name: "claude.tool.input_size_bytes", type: "int", span: "tool", stability: "stable", captured: "yes", description: "Byte length of JSON-serialized tool input" },
+  { name: "claude.tool.output_size_bytes", type: "int", span: "tool", stability: "stable", captured: "yes", description: "Byte length of string tool output" },
+  { name: "claude.tool.status", type: "string", span: "tool", stability: "stable", captured: "yes", description: "success, error, timeout, or cancelled" },
+  { name: "claude.tool.error_type", type: "string", span: "tool", stability: "stable", captured: "on error", description: "Exception class name if tool raised an exception" },
+  { name: "claude.tool.error_message", type: "string", span: "tool", stability: "stable", captured: "on error", description: "Truncated error message (max 500 chars)" },
+  { name: "claude.tool.latency_ms", type: "float", span: "tool", stability: "stable", captured: "yes", description: "Wall-clock milliseconds from tool call start to finish" },
+  { name: "claude.tool.is_parallel", type: "bool", span: "tool", stability: "stable", captured: "yes", description: "True if tool was invoked in parallel with other tools" },
+  // Cost attributes
+  { name: "claude.cost.input_usd", type: "string", span: "session/turn", stability: "stable", captured: "record_costs=True", description: "Cost for standard input tokens (USD string)" },
+  { name: "claude.cost.output_usd", type: "string", span: "session/turn", stability: "stable", captured: "record_costs=True", description: "Cost for output tokens (USD string)" },
+  { name: "claude.cost.cache_read_usd", type: "string", span: "session/turn", stability: "stable", captured: "record_costs=True", description: "Cost for cache-read tokens (USD string)" },
+  { name: "claude.cost.cache_creation_usd", type: "string", span: "session/turn", stability: "stable", captured: "record_costs=True", description: "Cost for cache-creation tokens (USD string)" },
+  { name: "claude.cost.total_usd", type: "string", span: "session/turn", stability: "stable", captured: "record_costs=True", description: "Sum of all cost components (USD string)" },
+  { name: "claude.cost.model", type: "string", span: "session/turn", stability: "stable", captured: "record_costs=True", description: "Model used for pricing lookup (self-contained record)" },
+  { name: "claude.cost.pricing_tier", type: "string", span: "session/turn", stability: "experimental", captured: "record_costs=True", description: "Pricing tier: standard, volume_1, volume_2" },
+];
+---
+
+<div class="scb-container">
+  <input
+    type="text"
+    id="scb-search"
+    placeholder="Filter attributes... (e.g. 'cost', 'tool', 'token')"
+    class="semconv-search"
+    aria-label="Filter semantic conventions"
+    autocomplete="off"
+  />
+  <p class="scb-count" id="scb-count">{attributes.length} attributes</p>
+
+  <div class="scb-table-wrapper">
+    <table class="scb-table" id="scb-table">
+      <thead>
+        <tr>
+          <th>Attribute name</th>
+          <th>Type</th>
+          <th>Span</th>
+          <th>Stability</th>
+          <th>Captured by default</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {attributes.map(attr => (
+          <tr data-search={`${attr.name} ${attr.description} ${attr.span} ${attr.type}`.toLowerCase()}>
+            <td><code class="scb-attr-name">{attr.name}</code></td>
+            <td><span class="scb-type">{attr.type}</span></td>
+            <td><span class={`scb-span scb-span-${attr.span.split('/')[0]}`}>{attr.span}</span></td>
+            <td>
+              <span class={attr.stability === 'stable' ? 'badge-stable' : 'badge-experimental'}>
+                {attr.stability}
+              </span>
+            </td>
+            <td><span class="scb-captured">{attr.captured}</span></td>
+            <td class="scb-desc">{attr.description}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const search = document.getElementById('scb-search') as HTMLInputElement;
+  const count = document.getElementById('scb-count');
+  const tbody = document.querySelector('#scb-table tbody');
+
+  if (search && tbody && count) {
+    search.addEventListener('input', () => {
+      const q = search.value.toLowerCase().trim();
+      let visible = 0;
+      tbody.querySelectorAll('tr').forEach(row => {
+        const text = (row as HTMLElement).dataset.search || '';
+        const show = !q || text.includes(q);
+        (row as HTMLElement).style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      count.textContent = q
+        ? `${visible} of ${tbody.querySelectorAll('tr').length} attributes`
+        : `${tbody.querySelectorAll('tr').length} attributes`;
+    });
+  }
+</script>
+
+<style>
+  .scb-container {
+    margin: 1.5rem 0;
+  }
+
+  .scb-count {
+    font-size: 0.8rem;
+    color: var(--sl-color-gray-3);
+    margin: 0 0 0.5rem;
+  }
+
+  .scb-table-wrapper {
+    overflow-x: auto;
+    border-radius: 8px;
+    border: 1px solid var(--sl-color-gray-5);
+  }
+
+  .scb-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  .scb-table th {
+    background: var(--sl-color-gray-6, #0f172a);
+    color: var(--sl-color-gray-1);
+    font-weight: 600;
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--sl-color-gray-5);
+  }
+
+  .scb-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--sl-color-gray-6, #0f172a);
+    vertical-align: top;
+  }
+
+  .scb-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .scb-table tr:hover td {
+    background: var(--sl-color-gray-6, #0f172a);
+  }
+
+  .scb-attr-name {
+    white-space: nowrap;
+    font-size: 0.75rem;
+    color: #7dd3fc;
+  }
+
+  .scb-type {
+    font-family: monospace;
+    font-size: 0.75rem;
+    padding: 0.1rem 0.3rem;
+    background: #1e293b;
+    border-radius: 3px;
+    color: #e2e8f0;
+  }
+
+  .scb-span {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+    white-space: nowrap;
+  }
+
+  .scb-span-session { background: #0e9c8f20; color: #0e9c8f; }
+  .scb-span-turn { background: #3b82f620; color: #93c5fd; }
+  .scb-span-tool { background: #22c55e20; color: #86efac; }
+  .scb-span-session\/turn, .scb-span-session {
+    background: #7c3aed20; color: #c4b5fd;
+  }
+
+  .scb-captured {
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3);
+    white-space: nowrap;
+  }
+
+  .scb-desc {
+    color: var(--sl-color-gray-2);
+    line-height: 1.4;
+    max-width: 300px;
+  }
+</style>

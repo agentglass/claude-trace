@@ -1,0 +1,229 @@
+---
+title: Cost Attribution
+description: Track Claude API costs per session, per customer, and across your entire fleet using built-in USD calculations.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+claude-trace includes built-in USD cost calculation for all Claude models. Costs appear as attributes on both session and turn spans, enabling you to build dashboards, alerting, and per-customer billing without any additional tooling.
+
+## How cost is calculated
+
+For each `messages.create()` call, the API response includes a `usage` object:
+
+```json
+{
+  "usage": {
+    "input_tokens": 1250,
+    "output_tokens": 380,
+    "cache_read_input_tokens": 2100,
+    "cache_creation_input_tokens": 800
+  }
+}
+```
+
+claude-trace multiplies each token count by the model's pricing tier:
+
+```
+input_cost    = input_tokens         × input_price_per_million   / 1_000_000
+output_cost   = output_tokens        × output_price_per_million  / 1_000_000
+cache_r_cost  = cache_read_tokens    × cache_read_price          / 1_000_000
+cache_w_cost  = cache_creation_tokens× cache_write_price         / 1_000_000
+total_cost    = input_cost + output_cost + cache_r_cost + cache_w_cost
+```
+
+The result is stored as a string (e.g. `"0.004523"`) to avoid floating-point precision loss in OTel backends.
+
+## Supported models and pricing
+
+As of 2026-Q1:
+
+| Model family | Model ID | Input ($/M) | Output ($/M) | Cache Write ($/M) | Cache Read ($/M) |
+|---|---|---|---|---|---|
+| Claude 4 Opus | `claude-opus-4-5` | $15.00 | $75.00 | $18.75 | $1.50 |
+| Claude 4 Opus | `claude-opus-4-0` | $15.00 | $75.00 | $18.75 | $1.50 |
+| Claude 4 Sonnet | `claude-sonnet-4-6` | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude 4 Sonnet | `claude-sonnet-4-6-20251101` | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude 4 Sonnet | `claude-sonnet-4-5` | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude 4 Haiku | `claude-haiku-4-5` | $0.80 | $4.00 | $1.00 | $0.08 |
+| Claude 3.5 Sonnet | `claude-3-5-sonnet-20241022` | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude 3.5 Sonnet | `claude-3-5-sonnet-20240620` | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude 3.5 Haiku | `claude-3-5-haiku-20241022` | $0.80 | $4.00 | $1.00 | $0.08 |
+| Claude 3 Opus | `claude-3-opus-20240229` | $15.00 | $75.00 | $18.75 | $1.50 |
+| Claude 3 Sonnet | `claude-3-sonnet-20240229` | $3.00 | $15.00 | $3.75 | $0.30 |
+| Claude 3 Haiku | `claude-3-haiku-20240307` | $0.25 | $1.25 | $0.30 | $0.03 |
+| Claude 2.1 | `claude-2.1` | $8.00 | $24.00 | — | — |
+| Claude 2.0 | `claude-2.0` | $8.00 | $24.00 | — | — |
+
+For unknown models, claude-trace falls back to Claude Sonnet 4 pricing and emits a `UserWarning`.
+
+## Prompt caching cost savings
+
+Prompt caching can significantly reduce costs for agents with large system prompts. The cache read rate is approximately 10% of the input rate — reading 1M tokens from cache costs $0.30 vs $3.00 for fresh input (on claude-sonnet-4-6).
+
+claude-trace tracks all four token categories separately so you can measure actual savings:
+
+```python
+with claude_trace.session(model="claude-sonnet-4-6") as sess:
+    # First call: populates cache (cache_creation_tokens billed at 125%)
+    resp1 = client.messages.create(...)
+
+    # Subsequent calls: reads from cache (10% of input rate)
+    resp2 = client.messages.create(...)
+    resp3 = client.messages.create(...)
+
+# After the session:
+c = sess.cost
+print(f"Standard input:  {c.input_tokens} tokens = ${c.input_cost_usd:.4f}")
+print(f"Cache writes:    {c.cache_creation_tokens} tokens = ${c.cache_creation_cost_usd:.4f}")
+print(f"Cache reads:     {c.cache_read_tokens} tokens = ${c.cache_read_cost_usd:.4f}")
+print(f"Output:          {c.output_tokens} tokens = ${c.output_cost_usd:.4f}")
+print(f"Total:           ${c.total_usd:.4f}")
+
+# Example output:
+# Standard input:  1250 tokens = $0.0038
+# Cache writes:    800 tokens  = $0.0030
+# Cache reads:     4200 tokens = $0.0013
+# Output:          380 tokens  = $0.0057
+# Total:           $0.0138
+```
+
+## Per-session cost tracking
+
+Every session span includes:
+- `claude.session.total_cost_usd` — total USD for the session
+- `claude.cost.input_usd` — input token cost
+- `claude.cost.output_usd` — output token cost
+- `claude.cost.cache_read_usd` — cache-read token cost
+- `claude.cost.cache_creation_usd` — cache-write token cost
+- `claude.cost.total_usd` — same as `total_cost_usd`
+
+Every turn span includes:
+- `claude.turn.cost_usd` — cost for this individual API call
+- `claude.cost.*` — full breakdown for this turn
+
+## Per-customer cost attribution
+
+The standard multi-tenant pattern:
+
+```python
+def handle_user_request(user_id: str, message: str) -> str:
+    """Process a user request under their own cost attribution."""
+    with claude_trace.session(
+        customer_id=user_id,           # use your internal user ID
+        tags=["feature:chat", "tier:free"],
+    ) as sess:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": message}],
+        )
+        return response.content[0].text
+
+# In your OTel backend, run:
+# SELECT
+#   claude_session_customer_id,
+#   sum(claude_session_total_cost_usd) as total_cost,
+#   count(*) as session_count
+# FROM spans
+# WHERE span_name = 'claude.session'
+# GROUP BY claude_session_customer_id
+# ORDER BY total_cost DESC
+```
+
+### Billing threshold alerts
+
+```python
+def handle_user_request_with_budget(user_id: str, message: str, budget_usd: float) -> dict:
+    with claude_trace.session(customer_id=user_id) as sess:
+        response = client.messages.create(...)
+
+    if sess.cost.total_usd > budget_usd:
+        # Alert or throttle
+        raise BudgetExceededError(
+            f"Session ${sess.cost.total_usd:.4f} exceeded budget ${budget_usd:.4f}"
+        )
+
+    return {
+        "text": response.content[0].text,
+        "cost_usd": sess.cost.total_usd,
+        "session_id": sess.session_id,
+    }
+```
+
+## Querying cost data in OTel backends
+
+### Grafana / Prometheus (with Tempo + Alloy)
+
+```
+# Total cost per customer (last 24h) — PromQL
+sum by (claude_session_customer_id) (
+  sum_over_time(
+    claude_session_total_cost_usd{span_name="claude.session"}[24h]
+  )
+)
+```
+
+### Honeycomb
+
+```
+CALCULATE SUM(claude.session.total_cost_usd)
+GROUP BY claude.session.customer_id
+ORDER BY SUM(claude.session.total_cost_usd) DESC
+```
+
+### Jaeger (search by attribute)
+
+In the Jaeger UI, filter by:
+- Service: `claude-agent`
+- Tags: `claude.session.customer_id=acme-corp`
+
+## Using the cost calculator directly
+
+If you need to calculate costs outside of tracing:
+
+```python
+from claude_trace._cost.calculator import get_calculator
+
+calc = get_calculator()
+
+# Calculate cost for a specific call
+breakdown = calc.calculate(
+    model="claude-sonnet-4-6",
+    input_tokens=5000,
+    output_tokens=800,
+    cache_read_tokens=10000,
+    cache_creation_tokens=2000,
+)
+
+print(f"Input cost:       ${breakdown.input_cost_usd:.6f}")
+print(f"Output cost:      ${breakdown.output_cost_usd:.6f}")
+print(f"Cache read cost:  ${breakdown.cache_read_cost_usd:.6f}")
+print(f"Cache write cost: ${breakdown.cache_creation_cost_usd:.6f}")
+print(f"Total cost:       ${breakdown.total_usd:.6f}")
+print(f"Summary: {breakdown.format_summary()}")
+```
+
+## Adding a new model's pricing
+
+When Anthropic releases new models, add them to `src/claude_trace/_cost/calculator.py`:
+
+```python
+# In _PRICING_TABLE:
+ModelPricing(
+    model_id="claude-opus-5-0",         # exact model ID
+    input_per_million=20.00,             # $/M input tokens
+    output_per_million=100.00,           # $/M output tokens
+    cache_write_per_million=25.00,       # $/M cache creation (optional, defaults to 1.25x input)
+    cache_read_per_million=2.00,         # $/M cache reads (optional, defaults to 0.10x input)
+),
+
+# And in _PREFIX_ALIASES:
+"claude-opus-5": "claude-opus-5-0",
+```
+
+Then add a unit test in `tests/unit/test_cost_calculator.py`.
+
+<Aside type="note">
+  Pricing is built into the library and updated with each release. If you notice pricing discrepancies, please open an issue on GitHub with a link to the current Anthropic pricing page. We update the pricing table approximately quarterly.
+</Aside>

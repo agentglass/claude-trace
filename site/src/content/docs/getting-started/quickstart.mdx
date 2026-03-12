@@ -1,0 +1,228 @@
+---
+title: Quickstart
+description: Get claude-trace running with a real Anthropic API call in under 2 minutes.
+---
+
+import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide takes you from zero to seeing structured spans in 3 steps.
+
+## Step 1: Install
+
+```bash
+pip install "claude-trace[console]"
+```
+
+The `[console]` extra adds the `rich` library so you can see spans printed to the terminal without needing a separate collector.
+
+## Step 2: Set up a TracerProvider
+
+Before calling `instrument()`, you need an OTel `TracerProvider` configured with an exporter.
+For local development, use the console exporter:
+
+```python
+# setup_tracing.py
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+
+import claude_trace
+from claude_trace.config import TraceConfig
+
+claude_trace.instrument(config=TraceConfig(tracer_provider=provider))
+```
+
+Or, if you already have a global OTel provider configured (via `opentelemetry-instrument` or SDK setup), you can skip the provider setup and just call:
+
+```python
+import claude_trace
+claude_trace.instrument()  # uses the globally-registered TracerProvider
+```
+
+## Step 3: Make an instrumented API call
+
+```python
+import anthropic
+import claude_trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+from claude_trace.config import TraceConfig
+
+# Configure tracing
+provider = TracerProvider()
+provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+claude_trace.instrument(config=TraceConfig(tracer_provider=provider))
+
+# Create client (after instrument())
+client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
+
+# Make a traced call
+with claude_trace.session(
+    model="claude-sonnet-4-6",
+    customer_id="quickstart-user",
+    tags=["demo"],
+) as sess:
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=256,
+        messages=[
+            {"role": "user", "content": "What is 2 + 2? Answer in one sentence."}
+        ],
+    )
+    print(response.content[0].text)
+
+# After the context manager exits, the session span is ended and exported
+print(f"\nSession summary:")
+print(f"  Turns:         {sess._turn_count}")
+print(f"  Input tokens:  {sess.cost.input_tokens}")
+print(f"  Output tokens: {sess.cost.output_tokens}")
+print(f"  Total cost:    ${sess.cost.total_usd:.6f}")
+```
+
+## What you will see
+
+The `ConsoleSpanExporter` prints spans as JSON to stdout. You will see two spans:
+
+**1. The turn span** (appears first because it ends before the session):
+
+```json
+{
+  "name": "claude.turn",
+  "context": {
+    "trace_id": "0x1a2b3c4d...",
+    "span_id": "0x5e6f7a8b..."
+  },
+  "parent_id": "0x9c0d1e2f...",
+  "attributes": {
+    "claude.turn.index": 0,
+    "claude.turn.model": "claude-sonnet-4-6-20251101",
+    "claude.turn.stop_reason": "end_turn",
+    "claude.turn.input_tokens": 18,
+    "claude.turn.output_tokens": 12,
+    "claude.turn.latency_ms": 843.2,
+    "claude.turn.is_streaming": false,
+    "claude.turn.tool_use_count": 0,
+    "claude.turn.cost_usd": "0.000234",
+    "claude.cost.input_usd": "0.000054",
+    "claude.cost.output_usd": "0.000180",
+    "claude.cost.total_usd": "0.000234"
+  }
+}
+```
+
+**2. The session span** (appears after because it ends when the `with` block exits):
+
+```json
+{
+  "name": "claude.session",
+  "context": {
+    "trace_id": "0x1a2b3c4d...",
+    "span_id": "0x9c0d1e2f..."
+  },
+  "parent_id": null,
+  "attributes": {
+    "claude.session.id": "sess_01a2b3c4d5e6f7a8b9c0d1e2",
+    "claude.session.model": "claude-sonnet-4-6",
+    "claude.session.max_turns": 10,
+    "claude.session.status": "completed",
+    "claude.session.customer_id": "quickstart-user",
+    "claude.session.tags": "demo",
+    "claude.session.total_turns": 1,
+    "claude.session.total_input_tokens": 18,
+    "claude.session.total_output_tokens": 12,
+    "claude.session.total_cost_usd": "0.000234",
+    "claude.session.total_tool_calls": 0
+  }
+}
+```
+
+## Sending spans to a real backend
+
+Once you have verified the basic integration works, replace the console exporter with an OTLP exporter pointing at your backend:
+
+<Tabs>
+  <TabItem label="Jaeger (local)">
+    ```bash
+    # Start Jaeger all-in-one (includes OTLP receiver on 4317)
+    docker run -d --name jaeger \
+      -p 16686:16686 \
+      -p 4317:4317 \
+      jaegertracing/all-in-one:latest
+    ```
+
+    ```python
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from claude_trace.config import TraceConfig
+    import claude_trace
+
+    provider = TracerProvider()
+    provider.add_span_processor(
+        BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4317"))
+    )
+    claude_trace.instrument(config=TraceConfig(tracer_provider=provider))
+    ```
+
+    Then open http://localhost:16686 and search for service `claude-agent`.
+  </TabItem>
+  <TabItem label="Grafana Tempo">
+    ```python
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.resources import Resource
+    from claude_trace.config import TraceConfig
+    import claude_trace
+
+    provider = TracerProvider(
+        resource=Resource.create({"service.name": "my-claude-agent"})
+    )
+    provider.add_span_processor(
+        BatchSpanProcessor(
+            OTLPSpanExporter(
+                endpoint="https://tempo.your-grafana-cloud.com:443",
+                headers={"Authorization": "Bearer <your-token>"},
+            )
+        )
+    )
+    claude_trace.instrument(config=TraceConfig(tracer_provider=provider))
+    ```
+  </TabItem>
+  <TabItem label="Environment variables (any backend)">
+    ```bash
+    export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+    export OTEL_SERVICE_NAME="my-claude-agent"
+    export OTEL_EXPORTER_OTLP_PROTOCOL="grpc"
+    ```
+
+    Then use the global provider (configured by the OTel SDK auto-configurator):
+    ```python
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+    # Configure globally
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+
+    import claude_trace
+    claude_trace.instrument()  # uses the global provider set above
+    ```
+  </TabItem>
+</Tabs>
+
+## Next steps
+
+- **[Core Concepts](/getting-started/concepts/)** — Understand what sessions, turns, and tool spans represent and how they nest.
+- **[Python Guide](/guides/python/)** — Async support, custom session metadata, framework integrations.
+- **[Security Guide](/guides/security/)** — Understand what data is captured and how to restrict it.
+- **[Semantic Conventions](/reference/semconv/)** — The complete attribute reference for building dashboards.
+
+<Aside type="tip">
+  For multi-turn agent loops, all `messages.create()` calls inside a single `claude_trace.session()` context manager are automatically linked as children of the same session span. You do not need to pass any context manually.
+</Aside>

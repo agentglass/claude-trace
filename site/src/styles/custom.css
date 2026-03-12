@@ -1,0 +1,99 @@
+/* claude-trace brand colors — deep teal/glass theme */
+:root {
+  --sl-color-accent-low: #0d2d3a;
+  --sl-color-accent: #0e9c8f;
+  --sl-color-accent-high: #4ecdc4;
+  --sl-color-white: #f8fafc;
+  --sl-color-gray-1: #e2e8f0;
+  --sl-color-gray-2: #cbd5e1;
+  --sl-color-gray-3: #94a3b8;
+  --sl-color-gray-4: #475569;
+  --sl-color-gray-5: #1e293b;
+  --sl-color-gray-6: #0f172a;
+  --sl-color-black: #020617;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e0f7f5;
+  --sl-color-accent: #0e9c8f;
+  --sl-color-accent-high: #0a7a6e;
+}
+
+/* Hero section enhancements */
+.hero {
+  border-bottom: 1px solid var(--sl-color-gray-5);
+  padding-bottom: 2rem;
+}
+
+/* Span hierarchy diagram styling */
+.span-box {
+  font-family: monospace;
+  white-space: pre;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+/* Attribute tables */
+.semconv-table {
+  font-size: 0.875rem;
+}
+
+.semconv-table th {
+  background: var(--sl-color-gray-6);
+  color: var(--sl-color-gray-1);
+  font-weight: 600;
+}
+
+.badge-experimental {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  background: #7c3aed20;
+  color: #7c3aed;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badge-stable {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  background: #0e9c8f20;
+  color: #0e9c8f;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Search input for semconv browser */
+.semconv-search {
+  width: 100%;
+  padding: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--sl-color-gray-4);
+  border-radius: 0.5rem;
+  background: var(--sl-color-gray-6);
+  color: var(--sl-color-white);
+  font-size: 0.9rem;
+}
+
+.semconv-search:focus {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
+
+/* Code callout boxes */
+.callout-security {
+  border-left: 4px solid #ef4444;
+  padding: 1rem;
+  background: #ef444410;
+  border-radius: 0 0.5rem 0.5rem 0;
+  margin: 1rem 0;
+}
+
+.callout-tip {
+  border-left: 4px solid var(--sl-color-accent);
+  padding: 1rem;
+  background: #0e9c8f10;
+  border-radius: 0 0.5rem 0.5rem 0;
+  margin: 1rem 0;
+}

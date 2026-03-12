@@ -1,0 +1,179 @@
+---
+title: Core Concepts
+description: Understand sessions, turns, and tool invocations — the three-level span hierarchy at the heart of claude-trace.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+claude-trace models agent behaviour as a three-level span hierarchy that maps directly to how Claude agents actually work: a **session** contains **turns**, each turn contains **tool invocations**.
+
+## The span hierarchy
+
+```
+claude.session   ← root span; one per claude_trace.session() context
+│
+├── claude.turn[0]   ← one turn per anthropic.messages.create() call
+│   ├── claude.tool[bash_0]      ← one tool span per tool_use block
+│   └── claude.tool[read_file_0]
+│
+├── claude.turn[1]
+│   └── claude.tool[bash_1]
+│
+└── claude.turn[2]
+    (no tools; stop_reason = "end_turn")
+```
+
+Each level has its own set of attributes, its own timing, and its own status. A session span ends when the `with` block exits. A turn span ends when the API response is fully received. A tool span ends when the tool function returns.
+
+## Sessions
+
+A **session** represents one complete agent conversation — from the first user message to the final `end_turn` or error. In code, it's a `claude_trace.session()` context manager:
+
+```python
+with claude_trace.session(
+    model="claude-sonnet-4-6",
+    customer_id="acme-corp",
+    max_turns=20,
+    tags=["billing-workflow"],
+) as sess:
+    # Everything inside here belongs to this session
+    response1 = client.messages.create(...)
+    response2 = client.messages.create(...)
+    response3 = client.messages.create(...)
+# Session span ends here
+```
+
+The session span carries **cumulative statistics** across all turns:
+- `claude.session.total_input_tokens` — sum of all `claude.turn.input_tokens` values
+- `claude.session.total_output_tokens` — sum of all output tokens
+- `claude.session.total_turns` — count of `messages.create()` calls
+- `claude.session.total_tool_calls` — sum of all tool invocations
+- `claude.session.total_cost_usd` — total USD estimated cost
+- `claude.session.status` — `"completed"`, `"error"`, or `"max_turns_reached"`
+
+The session span is the **root** span — it has no parent. All turn and tool spans are descendants of it.
+
+### Session identity
+
+Every session gets a unique `session_id` generated as `sess_{20-hex-chars}` unless you provide one:
+
+```python
+with claude_trace.session(session_id="my-workflow-run-42") as sess:
+    ...
+```
+
+This ID appears on the session span as `claude.session.id` and is useful for correlating trace data with your application's own identifiers.
+
+### System prompt privacy
+
+The session span stores a **SHA-256 hash** of the system prompt (first 16 hex chars), never the raw text:
+
+```python
+with claude_trace.session(system_prompt="You are a billing assistant...") as sess:
+    ...
+# Span will have: claude.session.system_prompt_hash = "a3f2b8c1d4e5f6a7"
+#                 claude.session.system_prompt_length = 34
+```
+
+This lets you group sessions by system prompt variation without risking PII exposure.
+
+## Turns
+
+A **turn** represents one complete call to `anthropic.messages.create()`. It begins when the call is made and ends when the full response has been received (including all streamed chunks if streaming is enabled).
+
+In a multi-turn agent loop, each iteration through the loop produces one turn span:
+
+```python
+with claude_trace.session() as sess:
+    # Turn 0: model responds with tool_use
+    resp1 = client.messages.create(model=..., messages=[user_msg])
+
+    # Turn 1: model responds with more tool_use
+    resp2 = client.messages.create(model=..., messages=[user_msg, assistant_msg1, tool_result1])
+
+    # Turn 2: model responds with end_turn
+    resp3 = client.messages.create(model=..., messages=[user_msg, ..., tool_result2])
+```
+
+Key turn attributes:
+- `claude.turn.index` — zero-based position in the session (0, 1, 2, ...)
+- `claude.turn.stop_reason` — why the model stopped: `end_turn`, `tool_use`, `max_tokens`, or `error`
+- `claude.turn.input_tokens` — tokens billed for this specific API call
+- `claude.turn.latency_ms` — wall-clock time from request to last response byte
+- `claude.turn.time_to_first_token_ms` — TTFT when streaming (absent on non-streaming calls)
+- `claude.turn.request_id` — the `x-request-id` header from Anthropic's response; use this for support tickets
+
+### Turn context propagation
+
+The instrumentation automatically detects the current session from Python's `contextvars`. This means you do not need to pass any context to `messages.create()`. The context flows through:
+- Synchronous code (direct call stack)
+- Async code (`asyncio.Task` inherits context from parent)
+- Thread pools (if you call `loop.run_in_executor`, you may need to copy context manually)
+
+## Tool invocations
+
+A **tool invocation** span represents one `tool_use` block from the model's response. It is a child of the turn that requested it.
+
+```python
+# If the model response contains:
+# content = [
+#   TextBlock(text="I'll check the file."),
+#   ToolUseBlock(id="toolu_01A2", name="read_file", input={"path": "/etc/hosts"}),
+#   ToolUseBlock(id="toolu_01A3", name="bash", input={"command": "ls /tmp"}),
+# ]
+
+# claude-trace automatically creates two tool spans:
+# claude.tool[read_file_0]
+#   claude.tool.use_id = "toolu_01A2"
+#   claude.tool.name = "read_file"
+#   claude.tool.call_index = 0
+#   claude.tool.is_parallel = true  (because 2 tools in same turn)
+#
+# claude.tool[bash_0]
+#   claude.tool.use_id = "toolu_01A3"
+#   claude.tool.name = "bash"
+#   claude.tool.call_index = 1
+#   claude.tool.is_parallel = true
+```
+
+The tool span records:
+- **Input:** `claude.tool.input_hash` (SHA-256, not raw input), `claude.tool.input_size_bytes`
+- **Output:** `claude.tool.output_size_bytes` (never raw output by default)
+- **Timing:** `claude.tool.latency_ms`
+- **Outcome:** `claude.tool.status` — `success`, `error`, `timeout`, or `cancelled`
+- **Errors:** `claude.tool.error_type`, `claude.tool.error_message` (truncated to 500 chars)
+
+### Parallel tool calls
+
+When the model requests multiple tools in a single response, they are executed concurrently. All parallel tools in a turn share the same parent turn span and have `claude.tool.is_parallel = true`. The `claude.tool.call_index` (0, 1, 2, ...) distinguishes them within the turn.
+
+## How claude-trace differs from generic OTel HTTP instrumentation
+
+Generic HTTP instrumentation (e.g., `opentelemetry-instrumentation-httpx`) would give you a single span per `messages.create()` call with attributes like `http.status_code = 200` and `http.url = "https://api.anthropic.com/v1/messages"`.
+
+claude-trace provides:
+
+| Generic HTTP instrumentation | claude-trace |
+|---|---|
+| 1 span per API call | 1 session + N turn + M tool spans per session |
+| `http.status_code`, `http.url` | 50+ `claude.*` semantic attributes |
+| No cost tracking | USD cost on every span |
+| No tool visibility | Tool calls as first-class children |
+| No session context | Session ID, customer ID, tags on root span |
+| Time from request to 200 | TTFT, turn latency, tool latency separately |
+| No streaming awareness | Streaming vs non-streaming distinguished |
+
+The key insight is that `http.status_code = 200` tells you the API worked. `claude.turn.stop_reason = "tool_use"` and `claude.session.total_turns = 7` tells you what your agent *did*.
+
+## OpenTelemetry span kinds
+
+claude-trace creates all spans with `SpanKind.INTERNAL` (the OTel default). This is intentional:
+- The session span is not a "server" span (it's not handling an incoming request)
+- The turn span is not a "client" span in the OTel sense (we capture it differently)
+- The spans are about internal agent logic, not network calls
+
+If you need to attach to an existing distributed trace (e.g., from an HTTP request that triggered the agent), claude-trace will automatically pick up the current OTel context. Any span created inside an active OTel context will be a child of that context's current span.
+
+<Aside type="tip">
+  Want to see how span attributes map to queries in Jaeger or Honeycomb? See the [Semantic Conventions reference](/reference/semconv/) for query examples for every attribute.
+</Aside>
