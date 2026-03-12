@@ -8,6 +8,111 @@ import SemconvBrowser from '../../../components/SemconvBrowser.astro';
 
 All span attributes emitted by claude-trace follow the `claude.{category}.{name}` naming pattern. This page documents every attribute, its type, stability status, and example value.
 
+<div class="semconv-meta">
+  <div class="semconv-stats-bar">
+    <span class="semconv-stat"><span class="semconv-stat__num">50</span> attributes</span>
+    <span class="semconv-stats-divider">·</span>
+    <span class="semconv-stat"><span class="semconv-stat__num">4</span> categories</span>
+    <span class="semconv-stats-divider">·</span>
+    <span class="semconv-stat"><span class="semconv-stat__num">0</span> deprecated</span>
+  </div>
+  <div class="semconv-stability-legend">
+    <span class="semconv-legend-label">Stability:</span>
+    <span class="semconv-chip semconv-chip--stable">stable</span>
+    <span class="semconv-chip semconv-chip--experimental">experimental</span>
+    <span class="semconv-chip semconv-chip--deprecated">deprecated</span>
+  </div>
+  <div class="semconv-additive-note">
+    All attributes are additive-only. Removing or renaming an attribute is a breaking change requiring a major version bump.
+  </div>
+</div>
+
+<style>{`
+  .semconv-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 20px 0 28px 0;
+    padding: 16px 20px;
+    background: var(--surface, #fff);
+    border-radius: 10px;
+    border-left: 4px solid #5865F2;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  }
+  .semconv-stats-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .semconv-stat {
+    font-size: 0.9rem;
+    color: var(--text-muted, #64748B);
+    font-weight: 500;
+  }
+  .semconv-stat__num {
+    color: #5865F2;
+    font-weight: 700;
+    font-size: 1rem;
+    margin-right: 3px;
+  }
+  .semconv-stats-divider {
+    color: var(--border, #CBD5E1);
+    font-weight: 300;
+  }
+  .semconv-stability-legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .semconv-legend-label {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748B);
+    font-weight: 600;
+  }
+  .semconv-chip {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 100px;
+    padding: 3px 10px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .semconv-chip--stable {
+    background: rgba(88, 101, 242, 0.12);
+    color: #5865F2;
+  }
+  :root[data-theme="dark"] .semconv-chip--stable {
+    background: rgba(129, 140, 248, 0.18);
+    color: #818CF8;
+  }
+  .semconv-chip--experimental {
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400E;
+  }
+  :root[data-theme="dark"] .semconv-chip--experimental {
+    background: rgba(245, 158, 11, 0.15);
+    color: #FCD34D;
+  }
+  .semconv-chip--deprecated {
+    background: rgba(107, 114, 128, 0.12);
+    color: #6B7280;
+    text-decoration: line-through;
+  }
+  :root[data-theme="dark"] .semconv-chip--deprecated {
+    background: rgba(107, 114, 128, 0.18);
+    color: #9CA3AF;
+  }
+  .semconv-additive-note {
+    font-size: 0.82rem;
+    color: var(--text, #0F172A);
+    line-height: 1.5;
+  }
+`}</style>
+
 ## Naming convention rules
 
 1. All names are **lowercase** dot-separated strings (OTel standard)

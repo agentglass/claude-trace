@@ -367,3 +367,75 @@ pre code {
   border-radius: 0 8px 8px 0;
   margin: 16px 0;
 }
+
+/* --------------------------------------------------------------------------
+   Milestone Progress Tracker
+   -------------------------------------------------------------------------- */
+.milestone-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 24px 0;
+}
+
+.milestone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--dp1);
+  border-left: 4px solid transparent;
+  font-family: var(--sl-font);
+}
+
+.milestone--complete {
+  border-left-color: #22C55E;
+}
+
+.milestone--active {
+  border-left-color: #5865F2;
+  box-shadow: var(--dp2);
+}
+
+.milestone--upcoming {
+  border-left-color: var(--border);
+  opacity: 0.7;
+}
+
+.milestone__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 50%;
+  background: #5865F2;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.milestone--complete .milestone__num {
+  background: #22C55E;
+}
+
+.milestone--upcoming .milestone__num {
+  background: var(--text-muted, #64748B);
+}
+
+.milestone__label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.milestone--upcoming .milestone__label {
+  color: var(--text-muted);
+}

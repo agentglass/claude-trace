@@ -232,3 +232,195 @@ The tradeoff is that OTel has a non-trivial setup cost (configure a `TracerProvi
 <Aside type="note">
   The semconv (`claude.*` attributes) deliberately does not overlap with the OTel GenAI semconv (`gen_ai.*`). They can coexist. See the [Semantic Conventions reference](/reference/semconv/) for details on the relationship.
 </Aside>
+
+## Rust Module Structure
+
+The Rust core implements all performance-critical logic — semconv constants, cost calculation, span lifecycle state machines, and trace diffing — as a single crate that is compiled to both a Python extension (via PyO3) and a WASM module (via wasm-bindgen).
+
+<div class="rust-modules">
+
+<div class="md-card rust-module-card">
+  <div class="rust-module-card__header">
+    <code class="rust-module-card__path">src/errors.rs</code>
+    <span class="rust-module-card__tag">error handling</span>
+  </div>
+  <div class="rust-module-card__body">
+    <div class="rust-module-card__exports">
+      <strong>Exports:</strong> <code>ClaudeTraceError</code> enum
+    </div>
+    <div class="rust-module-card__variants">
+      <div class="rust-variant"><span class="rust-variant__name">UnknownModel(String)</span> — model string not found in pricing table after all resolution steps</div>
+      <div class="rust-variant"><span class="rust-variant__name">InvalidTokenCount(u64)</span> — token count overflows cost calculation</div>
+      <div class="rust-variant"><span class="rust-variant__name">SerializationError(String)</span> — JSON encode/decode failure for span attributes</div>
+      <div class="rust-variant"><span class="rust-variant__name">SpanAlreadyEnded</span> — attempted to set attribute on a closed span</div>
+      <div class="rust-variant"><span class="rust-variant__name">ContextMissing</span> — <code>get_current_session()</code> called outside a session context</div>
+    </div>
+    <div class="rust-module-card__decision">
+      <span class="rust-module-card__decision-label">Key decision:</span> All variants implement <code>std::error::Error</code> + <code>Display</code>. The PyO3 binding maps each variant to a distinct Python exception class so callers can <code>except UnknownModelError</code> specifically.
+    </div>
+  </div>
+</div>
+
+<div class="md-card rust-module-card">
+  <div class="rust-module-card__header">
+    <code class="rust-module-card__path">src/semconv.rs</code>
+    <span class="rust-module-card__tag">constants</span>
+  </div>
+  <div class="rust-module-card__body">
+    <div class="rust-module-card__exports">
+      <strong>Exports:</strong> <code>ALL_ATTRIBUTES</code>, <code>SESSION</code>, <code>TURN</code>, <code>TOOL</code>, <code>COST</code>
+    </div>
+    <div class="rust-module-card__variants">
+      <div class="rust-variant"><span class="rust-variant__name">ALL_ATTRIBUTES: &amp;[&amp;str]</span> — compile-time slice of every <code>{"claude.*"}</code> attribute name; used for validation and documentation generation</div>
+      <div class="rust-variant"><span class="rust-variant__name">SESSION: SessionAttrs</span> — typed singleton with fields like <code>SESSION.ID</code>, <code>SESSION.MODEL</code>, <code>SESSION.STATUS</code></div>
+      <div class="rust-variant"><span class="rust-variant__name">TURN: TurnAttrs</span> — typed singleton for all <code>{"claude.turn.*"}</code> keys</div>
+      <div class="rust-variant"><span class="rust-variant__name">TOOL: ToolAttrs</span> — typed singleton for all <code>{"claude.tool.*"}</code> keys</div>
+    </div>
+    <div class="rust-module-card__decision">
+      <span class="rust-module-card__decision-label">Key decision:</span> Attribute names are <code>&amp;'static str</code> constants, not heap-allocated strings. This means zero allocation on the hot path (setting a span attribute = one pointer comparison, one pointer copy).
+    </div>
+  </div>
+</div>
+
+<div class="md-card rust-module-card">
+  <div class="rust-module-card__header">
+    <code class="rust-module-card__path">src/cost/calculator.rs</code>
+    <span class="rust-module-card__tag">cost model</span>
+  </div>
+  <div class="rust-module-card__body">
+    <div class="rust-module-card__exports">
+      <strong>Exports:</strong> <code>CostCalculator</code>, <code>ModelPricing</code>, <code>CostBreakdown</code>
+    </div>
+    <div class="rust-module-card__variants">
+      <div class="rust-variant"><span class="rust-variant__name">CostCalculator::new()</span> — builds the pricing index at startup; <code>O(n)</code> once, then <code>O(1)</code> per lookup</div>
+      <div class="rust-variant"><span class="rust-variant__name">ModelPricing</span> — immutable struct: <code>input_per_million: f64</code>, <code>output_per_million: f64</code>, <code>cache_read: f64</code>, <code>cache_write: f64</code></div>
+      <div class="rust-variant"><span class="rust-variant__name">CostBreakdown</span> — result type; implements <code>Add</code> for cumulative session totals; <code>total_usd()</code> is a computed method</div>
+    </div>
+    <div class="rust-module-card__decision">
+      <span class="rust-module-card__decision-label">Key decision:</span> <code>CostBreakdown</code> is <code>Copy</code>. Accumulation in a session loop copies 40 bytes per turn — no heap allocation, no <code>Arc</code>, no <code>Mutex</code>.
+    </div>
+  </div>
+</div>
+
+<div class="md-card rust-module-card">
+  <div class="rust-module-card__header">
+    <code class="rust-module-card__path">src/diff/mod.rs</code>
+    <span class="rust-module-card__tag">regression detection</span>
+  </div>
+  <div class="rust-module-card__body">
+    <div class="rust-module-card__exports">
+      <strong>Exports:</strong> <code>TraceSnapshot</code>, <code>TraceDiff</code>, <code>compare()</code>
+    </div>
+    <div class="rust-module-card__variants">
+      <div class="rust-variant"><span class="rust-variant__name">TraceSnapshot</span> — serializable capture of a complete session: all span attribute maps, turn order, tool call sequence</div>
+      <div class="rust-variant"><span class="rust-variant__name">TraceDiff</span> — structured diff between two snapshots: added/removed attributes, changed values, turn count delta, cost delta</div>
+      <div class="rust-variant"><span class="rust-variant__name">compare(a: &amp;TraceSnapshot, b: &amp;TraceSnapshot) -&gt; TraceDiff</span> — pure function; deterministic; used in pytest assertions</div>
+    </div>
+    <div class="rust-module-card__decision">
+      <span class="rust-module-card__decision-label">Key decision:</span> <code>TraceSnapshot</code> serializes to/from JSON via <code>serde</code>. Snapshots are stored as <code>.json</code> fixture files in the test suite and compared with <code>compare()</code> to detect regressions.
+    </div>
+  </div>
+</div>
+
+<div class="md-card rust-module-card">
+  <div class="rust-module-card__header">
+    <code class="rust-module-card__path">src/spans/</code>
+    <span class="rust-module-card__tag">span lifecycle</span>
+  </div>
+  <div class="rust-module-card__body">
+    <div class="rust-module-card__exports">
+      <strong>Exports:</strong> <code>SessionSpan</code>, <code>TurnSpan</code>, <code>ToolSpan</code>, <code>SpanConfig</code>
+    </div>
+    <div class="rust-module-card__variants">
+      <div class="rust-variant"><span class="rust-variant__name">SpanConfig</span> — controls what is captured: <code>capture_content: bool</code> (default <code>false</code>), <code>sanitize: bool</code> (default <code>true</code>), <code>record_costs: bool</code> (default <code>true</code>), <code>max_string_len: usize</code> (default <code>512</code>)</div>
+      <div class="rust-variant"><span class="rust-variant__name">SessionSpan</span> — state machine: <code>Running → Completed | Error</code>; holds cumulative <code>CostBreakdown</code>; thread-safe via interior mutability</div>
+      <div class="rust-variant"><span class="rust-variant__name">TurnSpan</span> — state machine: <code>Open → ResponseReceived → Ended</code>; sets all <code>{"claude.turn.*"}</code> attributes; child of <code>SessionSpan</code></div>
+      <div class="rust-variant"><span class="rust-variant__name">ToolSpan</span> — lightweight marker; state machine: <code>Open → Ended</code>; sets <code>{"claude.tool.*"}</code> attributes; child of <code>TurnSpan</code></div>
+    </div>
+    <div class="rust-module-card__decision">
+      <span class="rust-module-card__decision-label">Key decision:</span> State machines are encoded as Rust enums, making illegal transitions unrepresentable at compile time. Calling <code>turn.record_response()</code> in the <code>Ended</code> state returns <code>Err(SpanAlreadyEnded)</code> rather than silently doing nothing.
+    </div>
+  </div>
+</div>
+
+</div>
+
+<style>{`
+  .rust-modules {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin: 24px 0;
+  }
+  .rust-module-card {
+    padding: 0;
+    border-left: 3px solid #5865F2;
+  }
+  .rust-module-card__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--accent-subtle, #EEF2FF);
+    border-bottom: 1px solid var(--border, #E2E8F0);
+  }
+  .rust-module-card__path {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #5865F2;
+    background: none;
+    padding: 0;
+  }
+  .rust-module-card__tag {
+    margin-left: auto;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted, #64748B);
+    background: var(--border, #E2E8F0);
+    border-radius: 100px;
+    padding: 2px 8px;
+  }
+  .rust-module-card__body {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .rust-module-card__exports {
+    font-size: 0.85rem;
+    color: var(--text, #0F172A);
+  }
+  .rust-module-card__variants {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border, #E2E8F0);
+  }
+  .rust-variant {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748B);
+    line-height: 1.5;
+  }
+  .rust-variant__name {
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.8rem;
+    color: #5865F2;
+    margin-right: 4px;
+  }
+  .rust-module-card__decision {
+    font-size: 0.8rem;
+    color: var(--text, #0F172A);
+    background: var(--accent-subtle, #EEF2FF);
+    border-radius: 6px;
+    padding: 8px 12px;
+    line-height: 1.5;
+  }
+  .rust-module-card__decision-label {
+    font-weight: 700;
+    color: #5865F2;
+    margin-right: 4px;
+  }
+`}</style>

@@ -220,6 +220,230 @@ When an error occurs, the span is set to `StatusCode.ERROR` and `span.record_exc
 
 The error attributes are stored **in addition to** the normal attributes that were recorded before the error. For example, if a turn gets 1000 input tokens and then errors on output, the span will have both `claude.turn.input_tokens = 1000` and `claude.turn.error_type = "SomeException"`.
 
+## Security & Sanitization
+
+The Rust core applies a layered sanitization strategy before any string value is set as a span attribute. This section documents exactly what is captured and what is redacted under each configuration.
+
+### `SpanConfig.capture_content = false` (default)
+
+By default, **no message content is captured**. The fields that are omitted or replaced with a safe surrogate are:
+
+- `claude.turn.input_messages` — not set at all (field absent from span)
+- Tool input payloads (`block.input`) — not set; only `claude.tool.input_hash` (SHA-256 prefix) and `claude.tool.input_size_bytes` are recorded
+- Model response text — not set; only `claude.turn.text_content_length` (byte count) is recorded
+
+This is the correct default for production deployments where message content may contain PII, PHI, or proprietary information.
+
+### `SpanConfig.sanitize = true` (default)
+
+Even in fields that are captured (e.g., system prompt hash, model ID, tool names), the sanitizer applies the following transforms:
+
+- **API key redaction**: any string matching `sk-ant-[A-Za-z0-9\-_]+` is replaced with `[REDACTED]`
+- **512-character truncation**: all string attribute values are truncated to 512 characters to prevent span attribute bloat and accidental large payload capture
+- **SHA-256 input hash**: `claude.tool.input_hash` stores the first 16 hex characters of `sha256(json(tool_input))`. This is safe to log publicly — it lets you deduplicate identical tool calls without exposing the input content
+
+### Visual comparison: `capture_content=false` vs `capture_content=true`
+
+<div class="capture-comparison">
+
+  <div class="capture-card capture-card--safe">
+    <div class="capture-card__header">
+      <span class="capture-card__mode">capture_content = false</span>
+      <span class="capture-card__badge capture-card__badge--safe">default · recommended</span>
+    </div>
+    <div class="capture-card__attrs">
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.index</span>
+        <span class="capture-attr__value">2</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.model</span>
+        <span class="capture-attr__value">claude-sonnet-4-6</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.input_tokens</span>
+        <span class="capture-attr__value">4832</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.output_tokens</span>
+        <span class="capture-attr__value">312</span>
+      </div>
+      <div class="capture-attr capture-attr--absent">
+        <span class="capture-attr__name">claude.turn.input_messages</span>
+        <span class="capture-attr__value capture-attr__value--absent">not set</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.tool.input_hash</span>
+        <span class="capture-attr__value">a3f8c2d1b7e94012</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.tool.input_size_bytes</span>
+        <span class="capture-attr__value">284</span>
+      </div>
+      <div class="capture-attr capture-attr--absent">
+        <span class="capture-attr__name">claude.turn.output_text</span>
+        <span class="capture-attr__value capture-attr__value--absent">not set</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="capture-card capture-card--full">
+    <div class="capture-card__header">
+      <span class="capture-card__mode">capture_content = true</span>
+      <span class="capture-card__badge capture-card__badge--warn">explicit opt-in required</span>
+    </div>
+    <div class="capture-card__attrs">
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.index</span>
+        <span class="capture-attr__value">2</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.model</span>
+        <span class="capture-attr__value">claude-sonnet-4-6</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.input_tokens</span>
+        <span class="capture-attr__value">4832</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.turn.output_tokens</span>
+        <span class="capture-attr__value">312</span>
+      </div>
+      <div class="capture-attr capture-attr--sensitive">
+        <span class="capture-attr__name capture-attr__name--sensitive">claude.turn.input_messages</span>
+        <span class="capture-attr__value capture-attr__value--sensitive">[&lbrace;"role":"user","content":"What is the capital..."&rbrace;]</span>
+        <span class="capture-attr__pii">may contain PII</span>
+      </div>
+      <div class="capture-attr">
+        <span class="capture-attr__name">claude.tool.input_hash</span>
+        <span class="capture-attr__value">a3f8c2d1b7e94012</span>
+      </div>
+      <div class="capture-attr capture-attr--sensitive">
+        <span class="capture-attr__name capture-attr__name--sensitive">claude.tool.input</span>
+        <span class="capture-attr__value capture-attr__value--sensitive">&lbrace;"query": "SELECT &#42; FROM users WHERE..."&rbrace;</span>
+        <span class="capture-attr__pii">may contain sensitive data</span>
+      </div>
+      <div class="capture-attr capture-attr--sensitive">
+        <span class="capture-attr__name capture-attr__name--sensitive">claude.turn.output_text</span>
+        <span class="capture-attr__value capture-attr__value--sensitive">The capital of France is Paris... [truncated at 512 chars]</span>
+        <span class="capture-attr__pii">may contain proprietary content</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>{`
+  .capture-comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 24px 0;
+  }
+  @media (max-width: 720px) {
+    .capture-comparison {
+      grid-template-columns: 1fr;
+    }
+  }
+  .capture-card {
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .capture-card--safe {
+    border-top: 3px solid #22C55E;
+  }
+  .capture-card--full {
+    border-top: 3px solid #F59E0B;
+  }
+  .capture-card__header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--surface, #fff);
+    border-bottom: 1px solid var(--border, #E2E8F0);
+    flex-wrap: wrap;
+  }
+  .capture-card__mode {
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text, #0F172A);
+  }
+  .capture-card__badge {
+    margin-left: auto;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-radius: 100px;
+    padding: 2px 8px;
+  }
+  .capture-card__badge--safe {
+    background: rgba(34, 197, 94, 0.12);
+    color: #15803D;
+  }
+  .capture-card__badge--warn {
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400E;
+  }
+  .capture-card__attrs {
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--bg, #F8FAFC);
+  }
+  .capture-attr {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    background: var(--surface, #fff);
+  }
+  .capture-attr--absent {
+    opacity: 0.5;
+    background: transparent;
+    border: 1px dashed var(--border, #E2E8F0);
+  }
+  .capture-attr--sensitive {
+    background: rgba(239, 68, 68, 0.04);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+  }
+  .capture-attr__name {
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.72rem;
+    color: #5865F2;
+    font-weight: 600;
+  }
+  .capture-attr__name--sensitive {
+    color: #DC2626;
+  }
+  .capture-attr__value {
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.7rem;
+    color: var(--text-muted, #64748B);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .capture-attr__value--absent {
+    font-style: italic;
+  }
+  .capture-attr__value--sensitive {
+    color: #DC2626;
+  }
+  .capture-attr__pii {
+    font-size: 0.65rem;
+    color: #DC2626;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+`}</style>
+
 ## Thread safety
 
 The `AgentSession` object itself is not thread-safe (it has mutable state: `_turn_count`, `_tool_names`, etc.). The intended usage is one session per thread or per asyncio task. If you need multi-threaded access to the same session, add your own locking.

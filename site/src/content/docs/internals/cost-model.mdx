@@ -25,24 +25,174 @@ The table is indexed by `model_id` in `_PRICING_INDEX: dict[str, ModelPricing]` 
 
 ## Complete pricing table (2026-Q1)
 
-| Model ID | Input $/M | Output $/M | Cache Write $/M | Cache Read $/M |
-|---|---|---|---|---|
-| `claude-opus-4-5` | 15.00 | 75.00 | 18.75 | 1.50 |
-| `claude-opus-4-0` | 15.00 | 75.00 | 18.75 | 1.50 |
-| `claude-sonnet-4-6` | 3.00 | 15.00 | 3.75 | 0.30 |
-| `claude-sonnet-4-6-20251101` | 3.00 | 15.00 | 3.75 | 0.30 |
-| `claude-sonnet-4-5` | 3.00 | 15.00 | 3.75 | 0.30 |
-| `claude-sonnet-4-5-20250514` | 3.00 | 15.00 | 3.75 | 0.30 |
-| `claude-haiku-4-5` | 0.80 | 4.00 | 1.00 | 0.08 |
-| `claude-haiku-4-5-20250514` | 0.80 | 4.00 | 1.00 | 0.08 |
-| `claude-3-5-sonnet-20241022` | 3.00 | 15.00 | 3.75 | 0.30 |
-| `claude-3-5-sonnet-20240620` | 3.00 | 15.00 | 3.75 | 0.30 |
-| `claude-3-5-haiku-20241022` | 0.80 | 4.00 | 1.00 | 0.08 |
-| `claude-3-opus-20240229` | 15.00 | 75.00 | 18.75 | 1.50 |
-| `claude-3-sonnet-20240229` | 3.00 | 15.00 | — (derived) | — (derived) |
-| `claude-3-haiku-20240307` | 0.25 | 1.25 | 0.30 | 0.03 |
-| `claude-2.1` | 8.00 | 24.00 | — | — |
-| `claude-2.0` | 8.00 | 24.00 | — | — |
+<table class="pricing-table">
+  <thead>
+    <tr>
+      <th>Model ID</th>
+      <th>Input ($/MTok)</th>
+      <th>Output ($/MTok)</th>
+      <th>Cache Read ($/MTok)</th>
+      <th>Cache Write ($/MTok)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>claude-opus-4-5</code></td>
+      <td>$15.00</td>
+      <td>$75.00</td>
+      <td>$1.50</td>
+      <td>$18.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-opus-4-0</code></td>
+      <td>$15.00</td>
+      <td>$75.00</td>
+      <td>$1.50</td>
+      <td>$18.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-sonnet-4-6</code></td>
+      <td>$3.00</td>
+      <td>$15.00</td>
+      <td>$0.30</td>
+      <td>$3.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-sonnet-4-6-20251101</code></td>
+      <td>$3.00</td>
+      <td>$15.00</td>
+      <td>$0.30</td>
+      <td>$3.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-sonnet-4-5</code></td>
+      <td>$3.00</td>
+      <td>$15.00</td>
+      <td>$0.30</td>
+      <td>$3.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-sonnet-4-5-20250514</code></td>
+      <td>$3.00</td>
+      <td>$15.00</td>
+      <td>$0.30</td>
+      <td>$3.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-haiku-4-5</code></td>
+      <td>$0.80</td>
+      <td>$4.00</td>
+      <td>$0.08</td>
+      <td>$1.00</td>
+    </tr>
+    <tr>
+      <td><code>claude-haiku-4-5-20250514</code></td>
+      <td>$0.80</td>
+      <td>$4.00</td>
+      <td>$0.08</td>
+      <td>$1.00</td>
+    </tr>
+    <tr>
+      <td><code>claude-3-5-sonnet-20241022</code></td>
+      <td>$3.00</td>
+      <td>$15.00</td>
+      <td>$0.30</td>
+      <td>$3.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-3-5-sonnet-20240620</code></td>
+      <td>$3.00</td>
+      <td>$15.00</td>
+      <td>$0.30</td>
+      <td>$3.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-3-5-haiku-20241022</code></td>
+      <td>$0.80</td>
+      <td>$4.00</td>
+      <td>$0.08</td>
+      <td>$1.00</td>
+    </tr>
+    <tr>
+      <td><code>claude-3-opus-20240229</code></td>
+      <td>$15.00</td>
+      <td>$75.00</td>
+      <td>$1.50</td>
+      <td>$18.75</td>
+    </tr>
+    <tr>
+      <td><code>claude-3-sonnet-20240229</code></td>
+      <td>$3.00</td>
+      <td>$15.00</td>
+      <td><span class="pricing-derived">derived (10%)</span></td>
+      <td><span class="pricing-derived">derived (125%)</span></td>
+    </tr>
+    <tr>
+      <td><code>claude-3-haiku-20240307</code></td>
+      <td>$0.25</td>
+      <td>$1.25</td>
+      <td>$0.03</td>
+      <td>$0.30</td>
+    </tr>
+    <tr>
+      <td><code>claude-2.1</code></td>
+      <td>$8.00</td>
+      <td>$24.00</td>
+      <td><span class="pricing-na">—</span></td>
+      <td><span class="pricing-na">—</span></td>
+    </tr>
+    <tr>
+      <td><code>claude-2.0</code></td>
+      <td>$8.00</td>
+      <td>$24.00</td>
+      <td><span class="pricing-na">—</span></td>
+      <td><span class="pricing-na">—</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<style>{`
+  .pricing-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    font-family: var(--sl-font);
+    margin: 20px 0;
+  }
+  .pricing-table thead {
+    background: var(--accent-subtle, #EEF2FF);
+  }
+  .pricing-table th {
+    color: #5865F2;
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 10px 14px;
+    border-bottom: 2px solid #5865F2;
+    text-align: left;
+  }
+  .pricing-table td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border, #E2E8F0);
+    color: var(--text, #0F172A);
+    vertical-align: middle;
+  }
+  .pricing-table tr:last-child td {
+    border-bottom: none;
+  }
+  .pricing-table tr:hover td {
+    background: var(--accent-subtle, #EEF2FF);
+  }
+  .pricing-derived {
+    font-size: 0.75rem;
+    color: var(--text-muted, #64748B);
+    font-style: italic;
+  }
+  .pricing-na {
+    color: var(--text-muted, #64748B);
+  }
+`}</style>
 
 When `cache_write_per_million` or `cache_read_per_million` is `None`, the `effective_cache_write` and `effective_cache_read` properties compute defaults:
 
@@ -58,7 +208,132 @@ def effective_cache_read(self) -> float:
 
 ## Model resolution algorithm
 
-When `calculate(model, ...)` is called with a model string, the resolution happens in four steps:
+When `calculate(model, ...)` is called with a model string, the resolution happens in three steps:
+
+<div class="resolution-flow">
+
+  <div class="resolution-step">
+    <div class="resolution-step__circle">1</div>
+    <div class="resolution-step__content">
+      <div class="resolution-step__title">Exact match in pricing table</div>
+      <div class="resolution-step__desc">The model string is looked up directly in <code>_PRICING_INDEX</code>. This is an <code>O(1)</code> hash map lookup. Most production calls hit this path.<br/><span class="resolution-step__example">Example: <code>"claude-sonnet-4-6"</code> → direct hit</span></div>
+    </div>
+  </div>
+
+  <div class="resolution-connector">
+    <div class="resolution-connector__line"></div>
+    <div class="resolution-connector__label">no exact match</div>
+    <div class="resolution-connector__line"></div>
+  </div>
+
+  <div class="resolution-step">
+    <div class="resolution-step__circle">2</div>
+    <div class="resolution-step__content">
+      <div class="resolution-step__title">Longest prefix match</div>
+      <div class="resolution-step__desc">Prefix aliases are sorted by length (longest first) to prefer more specific matches. The first prefix that matches the start of the model string wins.<br/><span class="resolution-step__example">Example: <code>"claude-sonnet-4-99-future"</code> → matches prefix <code>"claude-sonnet-4"</code> → resolves to <code>claude-sonnet-4-6</code> pricing</span></div>
+    </div>
+  </div>
+
+  <div class="resolution-connector">
+    <div class="resolution-connector__line"></div>
+    <div class="resolution-connector__label">no prefix match</div>
+    <div class="resolution-connector__line"></div>
+  </div>
+
+  <div class="resolution-step resolution-step--error">
+    <div class="resolution-step__circle resolution-step__circle--error">!</div>
+    <div class="resolution-step__content">
+      <div class="resolution-step__title">Error: <code>UnknownModel</code></div>
+      <div class="resolution-step__desc">Returns <code>Err(ClaudeTraceError::UnknownModel(model.to_string()))</code>. The Python binding raises <code>UnknownModelError</code>. Monitor your logs for this warning — it indicates a new model that needs to be added to the pricing table.<br/><span class="resolution-step__example">Example: <code>"my-fine-tuned-model-v1"</code> → <code>UnknownModelError</code></span></div>
+    </div>
+  </div>
+
+</div>
+
+<style>{`
+  .resolution-flow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    margin: 24px 0;
+    gap: 0;
+  }
+  .resolution-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    background: var(--surface, #fff);
+    border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.07);
+    padding: 16px;
+    border-left: 4px solid #5865F2;
+  }
+  .resolution-step--error {
+    border-left-color: #EF4444;
+  }
+  .resolution-step__circle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    border-radius: 50%;
+    background: #5865F2;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+  }
+  .resolution-step__circle--error {
+    background: #EF4444;
+  }
+  .resolution-step__content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .resolution-step__title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text, #0F172A);
+  }
+  .resolution-step__desc {
+    font-size: 0.82rem;
+    color: var(--text-muted, #64748B);
+    line-height: 1.6;
+  }
+  .resolution-step__example {
+    display: inline-block;
+    margin-top: 4px;
+    background: var(--accent-subtle, #EEF2FF);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 0.78rem;
+    color: #5865F2;
+    font-style: normal;
+  }
+  .resolution-connector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    margin: 2px 0;
+  }
+  .resolution-connector__line {
+    flex: 1;
+    height: 1px;
+    background: var(--border, #E2E8F0);
+  }
+  .resolution-connector__label {
+    font-size: 0.7rem;
+    color: var(--text-muted, #64748B);
+    white-space: nowrap;
+    font-style: italic;
+  }
+`}</style>
+
+When `calculate(model, ...)` is called with a model string, the full code resolution happens in four steps:
 
 **Step 1: Exact match**
 ```python
