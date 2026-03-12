@@ -24,31 +24,99 @@ The tradeoff of monkey-patching is that it's more fragile if the Anthropic SDK's
 
 ## The three-layer model
 
-```
-┌─────────────────────────────────────────────────────┐
-│                 Your agent code                      │
-│    client.messages.create(model=..., messages=[...]) │
-└───────────────────────────┬─────────────────────────┘
-                            │ (patched by instrument())
-┌───────────────────────────▼─────────────────────────┐
-│           claude-trace instrumentation layer         │
-│   ┌─────────────────────────────────────────────┐   │
-│   │  patched_create():                          │   │
-│   │    1. get_current_session() from contextvars │   │
-│   │    2. build AgentTurn, start turn span       │   │
-│   │    3. call original messages.create()        │   │
-│   │    4. record response → turn span attrs      │   │
-│   │    5. create child tool spans                │   │
-│   │    6. end turn span                          │   │
-│   │    7. update session cumulative stats        │   │
-│   └─────────────────────────────────────────────┘   │
-└───────────────────────────┬─────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────┐
-│          Original anthropic.messages.create()        │
-│                  (unchanged)                         │
-└─────────────────────────────────────────────────────┘
-```
+<div class="arch-layers">
+  <div class="arch-layer arch-layer--top">
+    <div class="arch-layer__label">Your agent code</div>
+    <div class="arch-layer__detail"><code>client.messages.create(model=..., messages=[...])</code></div>
+  </div>
+  <div class="arch-connector">patched by <code>instrument()</code></div>
+  <div class="arch-layer arch-layer--mid">
+    <div class="arch-layer__label">claude-trace instrumentation layer</div>
+    <div class="arch-layer__steps">
+      <div class="arch-step"><span class="arch-step__num">1</span> get_current_session() from contextvars</div>
+      <div class="arch-step"><span class="arch-step__num">2</span> build AgentTurn, start turn span</div>
+      <div class="arch-step"><span class="arch-step__num">3</span> call original messages.create()</div>
+      <div class="arch-step"><span class="arch-step__num">4</span> record response &rarr; turn span attrs</div>
+      <div class="arch-step"><span class="arch-step__num">5</span> create child tool spans</div>
+      <div class="arch-step"><span class="arch-step__num">6</span> end turn span</div>
+      <div class="arch-step"><span class="arch-step__num">7</span> update session cumulative stats</div>
+    </div>
+  </div>
+  <div class="arch-connector">&darr;</div>
+  <div class="arch-layer arch-layer--bot">
+    <div class="arch-layer__label">Original <code>anthropic.messages.create()</code></div>
+    <div class="arch-layer__detail">unchanged</div>
+  </div>
+</div>
+
+<style>{`
+  .arch-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 24px 0;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  }
+  .arch-layer {
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.06);
+  }
+  .arch-layer--top {
+    background: var(--surface, #fff);
+    border-left: 3px solid #94A3B8;
+  }
+  .arch-layer--mid {
+    background: var(--accent-subtle, #EEF2FF);
+    border-left: 3px solid #5865F2;
+  }
+  .arch-layer--bot {
+    background: var(--surface, #fff);
+    border-left: 3px solid #94A3B8;
+  }
+  .arch-layer__label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text, #0F172A);
+    margin-bottom: 4px;
+  }
+  .arch-layer__detail {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748B);
+  }
+  .arch-layer__steps {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .arch-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: var(--text, #0F172A);
+  }
+  .arch-step__num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 100px;
+    background: #5865F2;
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .arch-connector {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--text-muted, #64748B);
+    padding: 6px 0;
+  }
+`}</style>
 
 ## Context propagation via `contextvars`
 

@@ -4,24 +4,13 @@ description: Understand sessions, turns, and tool invocations — the three-leve
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import SpanHierarchy from '../../../components/SpanHierarchy.astro';
 
 claude-trace models agent behaviour as a three-level span hierarchy that maps directly to how Claude agents actually work: a **session** contains **turns**, each turn contains **tool invocations**.
 
 ## The span hierarchy
 
-```
-claude.session   ← root span; one per claude_trace.session() context
-│
-├── claude.turn[0]   ← one turn per anthropic.messages.create() call
-│   ├── claude.tool[bash_0]      ← one tool span per tool_use block
-│   └── claude.tool[read_file_0]
-│
-├── claude.turn[1]
-│   └── claude.tool[bash_1]
-│
-└── claude.turn[2]
-    (no tools; stop_reason = "end_turn")
-```
+<SpanHierarchy />
 
 Each level has its own set of attributes, its own timing, and its own status. A session span ends when the `with` block exits. A turn span ends when the API response is fully received. A tool span ends when the tool function returns.
 

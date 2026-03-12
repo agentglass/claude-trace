@@ -1,99 +1,369 @@
-/* claude-trace brand colors — deep teal/glass theme */
-:root {
-  --sl-color-accent-low: #0d2d3a;
-  --sl-color-accent: #0e9c8f;
-  --sl-color-accent-high: #4ecdc4;
-  --sl-color-white: #f8fafc;
-  --sl-color-gray-1: #e2e8f0;
-  --sl-color-gray-2: #cbd5e1;
-  --sl-color-gray-3: #94a3b8;
-  --sl-color-gray-4: #475569;
-  --sl-color-gray-5: #1e293b;
-  --sl-color-gray-6: #0f172a;
-  --sl-color-black: #020617;
-}
+/* ==========================================================================
+   claude-trace — Material Design System
+   3-Color Palette: Iris #5865F2 | Ink #0F172A | Mist #F8FAFC
+   ========================================================================== */
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* --------------------------------------------------------------------------
+   CSS Custom Properties — Light Mode
+   -------------------------------------------------------------------------- */
+:root,
 :root[data-theme="light"] {
-  --sl-color-accent-low: #e0f7f5;
-  --sl-color-accent: #0e9c8f;
-  --sl-color-accent-high: #0a7a6e;
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --surface-raised: #FFFFFF;
+  --text: #0F172A;
+  --text-muted: #64748B;
+  --border: #E2E8F0;
+  --accent: #5865F2;
+  --accent-subtle: #EEF2FF;
+  --code-bg: #F1F5F9;
+
+  /* Starlight variable overrides */
+  --sl-color-accent-low: #EEF2FF;
+  --sl-color-accent: #5865F2;
+  --sl-color-accent-high: #4338CA;
+  --sl-color-white: #F8FAFC;
+  --sl-color-gray-1: #E2E8F0;
+  --sl-color-gray-2: #CBD5E1;
+  --sl-color-gray-3: #94A3B8;
+  --sl-color-gray-4: #64748B;
+  --sl-color-gray-5: #334155;
+  --sl-color-gray-6: #0F172A;
+  --sl-color-black: #020617;
+  --sl-font: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono',
+    Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
-/* Hero section enhancements */
-.hero {
-  border-bottom: 1px solid var(--sl-color-gray-5);
-  padding-bottom: 2rem;
+/* --------------------------------------------------------------------------
+   CSS Custom Properties — Dark Mode
+   -------------------------------------------------------------------------- */
+:root[data-theme="dark"] {
+  --bg: #0F172A;
+  --surface: #1E293B;
+  --surface-raised: #263248;
+  --text: #F8FAFC;
+  --text-muted: #94A3B8;
+  --border: #1E293B;
+  --accent: #818CF8;
+  --accent-subtle: #1E1B4B;
+  --code-bg: #0D1117;
+
+  --sl-color-accent-low: #1E1B4B;
+  --sl-color-accent: #818CF8;
+  --sl-color-accent-high: #A5B4FC;
 }
 
-/* Span hierarchy diagram styling */
-.span-box {
-  font-family: monospace;
-  white-space: pre;
-  font-size: 0.85em;
-  line-height: 1.6;
+/* --------------------------------------------------------------------------
+   Elevation Shadows (Material dp system)
+   -------------------------------------------------------------------------- */
+:root {
+  --dp1: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.1);
+  --dp2: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+  --dp4: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
 }
 
-/* Attribute tables */
-.semconv-table {
-  font-size: 0.875rem;
+/* --------------------------------------------------------------------------
+   Base Typography
+   -------------------------------------------------------------------------- */
+body {
+  font-family: var(--sl-font);
+  background-color: var(--bg);
+  color: var(--text);
 }
 
-.semconv-table th {
-  background: var(--sl-color-gray-6);
-  color: var(--sl-color-gray-1);
+/* --------------------------------------------------------------------------
+   Material Card Utilities
+   -------------------------------------------------------------------------- */
+.md-card {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--dp2);
+  overflow: hidden;
+}
+
+.md-card-raised {
+  background: var(--surface-raised);
+  border-radius: 12px;
+  box-shadow: var(--dp4);
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   Chip Utilities
+   -------------------------------------------------------------------------- */
+.md-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 100px;
+  padding: 4px 12px;
+  font-size: 0.7rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  font-family: var(--sl-font);
+}
+
+.md-chip--success {
+  background: #DCFCE7;
+  color: #166534;
+}
+
+:root[data-theme="dark"] .md-chip--success {
+  background: rgba(20, 83, 45, 0.3);
+  color: #4ADE80;
+}
+
+.md-chip--error {
+  background: #FEE2E2;
+  color: #DC2626;
+}
+
+:root[data-theme="dark"] .md-chip--error {
+  background: rgba(127, 29, 29, 0.3);
+  color: #F87171;
+}
+
+.md-chip--warning {
+  background: #FEF9C3;
+  color: #92400E;
+}
+
+:root[data-theme="dark"] .md-chip--warning {
+  background: rgba(120, 53, 15, 0.3);
+  color: #FCD34D;
+}
+
+.md-chip--neutral {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   Divider
+   -------------------------------------------------------------------------- */
+.md-divider {
+  height: 1px;
+  background: var(--border);
+  border: none;
+}
+
+/* --------------------------------------------------------------------------
+   Span Hierarchy Card Classes
+   -------------------------------------------------------------------------- */
+.span-card {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--dp2);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.span-card--session {
+  border-left: 3px solid #5865F2;
+}
+
+.span-card--turn {
+  border-left: 3px solid #818CF8;
+  margin-left: 24px;
+  box-shadow: var(--dp1);
+}
+
+.span-card--turn-error,
+.span-card--error {
+  border-left: 3px solid #EF4444;
+}
+
+/* Tool invocations: inline chips, not full-width cards */
+.span-card--tool {
+  display: inline-flex;
+  border-radius: 100px;
+  box-shadow: var(--dp1);
+  padding: 4px 12px;
+  margin-bottom: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Code Block Enhancement
+   -------------------------------------------------------------------------- */
+pre,
+.expressive-code pre {
+  background: var(--code-bg) !important;
+  border-radius: 6px !important;
+  font-family: var(--sl-font-mono) !important;
+}
+
+code:not(pre code) {
+  font-family: var(--sl-font-mono);
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.875em;
+  color: var(--accent);
+}
+
+pre code {
+  font-family: var(--sl-font-mono) !important;
+}
+
+/* --------------------------------------------------------------------------
+   Callout / Aside Overrides — Material left-border style
+   -------------------------------------------------------------------------- */
+.starlight-aside {
+  border-radius: 8px;
+  border: none;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-subtle);
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+
+.starlight-aside--note {
+  border-left-color: #5865F2;
+  background: var(--accent-subtle);
+}
+
+.starlight-aside--tip {
+  border-left-color: #22C55E;
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.starlight-aside--caution {
+  border-left-color: #F59E0B;
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.starlight-aside--danger {
+  border-left-color: #EF4444;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+/* --------------------------------------------------------------------------
+   Table Styles — Material (bottom borders only, no zebra stripes)
+   -------------------------------------------------------------------------- */
+.sl-markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-family: var(--sl-font);
+}
+
+.sl-markdown-content table thead {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.sl-markdown-content table th {
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--border);
+  text-align: left;
+}
+
+.sl-markdown-content table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: top;
+}
+
+.sl-markdown-content table tr:last-child td {
+  border-bottom: none;
+}
+
+.sl-markdown-content table tr:hover td {
+  background: var(--accent-subtle);
+}
+
+/* --------------------------------------------------------------------------
+   Hero Enhancements
+   -------------------------------------------------------------------------- */
+.hero {
+  padding-bottom: 48px;
+}
+
+.hero h1,
+.hero .hero-title {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.hero .tagline,
+.hero-tagline {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* --------------------------------------------------------------------------
+   Stability / Status Badges
+   -------------------------------------------------------------------------- */
+.badge-stable {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 100px;
+  background: rgba(88, 101, 242, 0.12);
+  color: #5865F2;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--sl-font);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+:root[data-theme="dark"] .badge-stable {
+  background: rgba(129, 140, 248, 0.15);
+  color: #818CF8;
 }
 
 .badge-experimental {
-  display: inline-block;
-  padding: 0.125rem 0.5rem;
-  border-radius: 9999px;
-  background: #7c3aed20;
-  color: #7c3aed;
-  font-size: 0.75rem;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 100px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400E;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--sl-font);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.badge-stable {
-  display: inline-block;
-  padding: 0.125rem 0.5rem;
-  border-radius: 9999px;
-  background: #0e9c8f20;
-  color: #0e9c8f;
-  font-size: 0.75rem;
-  font-weight: 500;
+:root[data-theme="dark"] .badge-experimental {
+  background: rgba(245, 158, 11, 0.15);
+  color: #FCD34D;
 }
 
-/* Search input for semconv browser */
-.semconv-search {
-  width: 100%;
-  padding: 0.5rem 1rem;
-  margin-bottom: 1rem;
-  border: 1px solid var(--sl-color-gray-4);
-  border-radius: 0.5rem;
-  background: var(--sl-color-gray-6);
-  color: var(--sl-color-white);
-  font-size: 0.9rem;
-}
-
-.semconv-search:focus {
-  outline: 2px solid var(--sl-color-accent);
-  outline-offset: 2px;
-}
-
-/* Code callout boxes */
+/* --------------------------------------------------------------------------
+   Legacy callout classes (kept for backwards compat)
+   -------------------------------------------------------------------------- */
 .callout-security {
-  border-left: 4px solid #ef4444;
-  padding: 1rem;
-  background: #ef444410;
-  border-radius: 0 0.5rem 0.5rem 0;
-  margin: 1rem 0;
+  border-left: 4px solid #EF4444;
+  padding: 12px 16px;
+  background: rgba(239, 68, 68, 0.06);
+  border-radius: 0 8px 8px 0;
+  margin: 16px 0;
 }
 
 .callout-tip {
-  border-left: 4px solid var(--sl-color-accent);
-  padding: 1rem;
-  background: #0e9c8f10;
-  border-radius: 0 0.5rem 0.5rem 0;
-  margin: 1rem 0;
+  border-left: 4px solid #5865F2;
+  padding: 12px 16px;
+  background: var(--accent-subtle);
+  border-radius: 0 8px 8px 0;
+  margin: 16px 0;
 }

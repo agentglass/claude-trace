@@ -3,6 +3,7 @@
  * SpanHierarchy.astro
  *
  * Renders an interactive visual showing the session → turn → tool span hierarchy.
+ * Material Design system: Iris/Ink/Mist palette, Inter typography, dp elevation.
  * Uses pure HTML/CSS with no JavaScript dependencies.
  *
  * Usage in MDX:
@@ -21,246 +22,376 @@ const { showAttributes = true } = Astro.props;
 ---
 
 <div class="span-hierarchy" aria-label="Claude-trace span hierarchy diagram">
-  <!-- Session span -->
-  <div class="sh-span sh-session">
-    <div class="sh-header">
-      <span class="sh-kind">INTERNAL</span>
-      <span class="sh-name">claude.session</span>
-      <span class="sh-status sh-ok">OK</span>
+
+  <!-- Session span: full-width card, Iris left-border 3px, dp2 shadow -->
+  <div class="span-card span-card--session">
+    <div class="span-card__header">
+      <div class="span-card__title">
+        <span class="md-chip md-chip--neutral">SPAN</span>
+        <span class="span-card__name">claude.session</span>
+      </div>
+      <div class="span-card__meta">
+        <span class="md-chip md-chip--success">OK</span>
+        <span class="span-card__duration">847ms</span>
+        <span class="span-card__cost">$0.045</span>
+      </div>
     </div>
+
     {showAttributes && (
-      <div class="sh-attrs">
-        <div class="sh-attr"><span class="sh-key">claude.session.id</span><span class="sh-val">"sess_01HV2Y3K8P9Q0..."</span></div>
-        <div class="sh-attr"><span class="sh-key">claude.session.model</span><span class="sh-val">"claude-sonnet-4-6"</span></div>
-        <div class="sh-attr"><span class="sh-key">claude.session.customer_id</span><span class="sh-val">"acme-corp"</span></div>
-        <div class="sh-attr"><span class="sh-key">claude.session.total_turns</span><span class="sh-val">3</span></div>
-        <div class="sh-attr"><span class="sh-key">claude.session.total_cost_usd</span><span class="sh-val">"0.04523"</span></div>
+      <div class="span-card__attrs">
+        <div class="span-attr">
+          <span class="span-attr__key">claude.session.id</span>
+          <span class="span-attr__value span-attr__value--string">"sess_01HV2Y3K8P9Q0..."</span>
+        </div>
+        <div class="span-attr">
+          <span class="span-attr__key">claude.session.model</span>
+          <span class="span-attr__value span-attr__value--string">"claude-sonnet-4-6"</span>
+        </div>
+        <div class="span-attr">
+          <span class="span-attr__key">claude.session.customer_id</span>
+          <span class="span-attr__value span-attr__value--string">"acme-corp"</span>
+        </div>
+        <div class="span-attr">
+          <span class="span-attr__key">claude.session.total_turns</span>
+          <span class="span-attr__value span-attr__value--number">3</span>
+        </div>
+        <div class="span-attr">
+          <span class="span-attr__key">claude.session.total_cost_usd</span>
+          <span class="span-attr__value span-attr__value--string">"0.04523"</span>
+        </div>
       </div>
     )}
-    <div class="sh-timing-bar sh-timing-session"></div>
 
-    <!-- Turn 0 -->
-    <div class="sh-span sh-turn">
-      <div class="sh-header">
-        <span class="sh-kind">INTERNAL</span>
-        <span class="sh-name">claude.turn</span>
-        <span class="sh-index">[0]</span>
-        <span class="sh-status sh-ok">OK</span>
-      </div>
-      {showAttributes && (
-        <div class="sh-attrs">
-          <div class="sh-attr"><span class="sh-key">claude.turn.stop_reason</span><span class="sh-val">"tool_use"</span></div>
-          <div class="sh-attr"><span class="sh-key">claude.turn.input_tokens</span><span class="sh-val">1204</span></div>
-          <div class="sh-attr"><span class="sh-key">claude.turn.latency_ms</span><span class="sh-val">841.3</span></div>
-        </div>
-      )}
-      <div class="sh-timing-bar sh-timing-turn"></div>
-
-      <!-- Tool spans -->
-      <div class="sh-span sh-tool">
-        <div class="sh-header">
-          <span class="sh-kind">INTERNAL</span>
-          <span class="sh-name">claude.tool</span>
-          <span class="sh-index">[bash_0]</span>
-          <span class="sh-status sh-ok">OK</span>
-        </div>
-        {showAttributes && (
-          <div class="sh-attrs">
-            <div class="sh-attr"><span class="sh-key">claude.tool.name</span><span class="sh-val">"bash"</span></div>
-            <div class="sh-attr"><span class="sh-key">claude.tool.status</span><span class="sh-val">"success"</span></div>
-            <div class="sh-attr"><span class="sh-key">claude.tool.latency_ms</span><span class="sh-val">47.2</span></div>
-          </div>
-        )}
-        <div class="sh-timing-bar sh-timing-tool"></div>
-      </div>
-
-      <div class="sh-span sh-tool">
-        <div class="sh-header">
-          <span class="sh-kind">INTERNAL</span>
-          <span class="sh-name">claude.tool</span>
-          <span class="sh-index">[read_file_0]</span>
-          <span class="sh-status sh-ok">OK</span>
-        </div>
-        {showAttributes && (
-          <div class="sh-attrs">
-            <div class="sh-attr"><span class="sh-key">claude.tool.name</span><span class="sh-val">"read_file"</span></div>
-            <div class="sh-attr"><span class="sh-key">claude.tool.is_parallel</span><span class="sh-val">true</span></div>
-          </div>
-        )}
-        <div class="sh-timing-bar sh-timing-tool"></div>
-      </div>
+    <div class="span-card__timing">
+      <div class="timing-bar timing-bar--session"></div>
     </div>
 
-    <!-- Turn 1 -->
-    <div class="sh-span sh-turn">
-      <div class="sh-header">
-        <span class="sh-kind">INTERNAL</span>
-        <span class="sh-name">claude.turn</span>
-        <span class="sh-index">[1]</span>
-        <span class="sh-status sh-error">ERROR</span>
-      </div>
-      {showAttributes && (
-        <div class="sh-attrs">
-          <div class="sh-attr"><span class="sh-key">claude.turn.stop_reason</span><span class="sh-val">"tool_use"</span></div>
-        </div>
-      )}
-      <div class="sh-timing-bar sh-timing-turn"></div>
+    <!-- Children: Turn cards, indented -->
+    <div class="span-children">
 
-      <div class="sh-span sh-tool sh-tool-error">
-        <div class="sh-header">
-          <span class="sh-kind">INTERNAL</span>
-          <span class="sh-name">claude.tool</span>
-          <span class="sh-index">[bash_1]</span>
-          <span class="sh-status sh-error">ERROR</span>
+      <!-- Turn 0: OK, tool_use stop reason -->
+      <div class="span-card span-card--turn">
+        <div class="span-card__header">
+          <div class="span-card__title">
+            <span class="md-chip md-chip--neutral">SPAN</span>
+            <span class="span-card__name">claude.turn</span>
+            <span class="span-card__index">#0</span>
+          </div>
+          <div class="span-card__meta">
+            <span class="md-chip md-chip--success">OK</span>
+            <span class="span-card__duration">341ms</span>
+          </div>
         </div>
+
         {showAttributes && (
-          <div class="sh-attrs">
-            <div class="sh-attr"><span class="sh-key">claude.tool.status</span><span class="sh-val sh-val-error">"error"</span></div>
-            <div class="sh-attr"><span class="sh-key">claude.tool.error_type</span><span class="sh-val sh-val-error">"FileNotFoundError"</span></div>
+          <div class="span-card__attrs">
+            <div class="span-attr">
+              <span class="span-attr__key">stop_reason</span>
+              <span class="span-attr__value span-attr__value--string">"tool_use"</span>
+            </div>
+            <div class="span-attr">
+              <span class="span-attr__key">input_tokens</span>
+              <span class="span-attr__value span-attr__value--number">1204</span>
+            </div>
+            <div class="span-attr">
+              <span class="span-attr__key">latency_ms</span>
+              <span class="span-attr__value span-attr__value--number">841.3</span>
+            </div>
           </div>
         )}
-        <div class="sh-timing-bar sh-timing-tool"></div>
-      </div>
-    </div>
 
-    <!-- Turn 2 -->
-    <div class="sh-span sh-turn">
-      <div class="sh-header">
-        <span class="sh-kind">INTERNAL</span>
-        <span class="sh-name">claude.turn</span>
-        <span class="sh-index">[2]</span>
-        <span class="sh-status sh-ok">OK</span>
-      </div>
-      {showAttributes && (
-        <div class="sh-attrs">
-          <div class="sh-attr"><span class="sh-key">claude.turn.stop_reason</span><span class="sh-val">"end_turn"</span></div>
-          <div class="sh-attr"><span class="sh-key">claude.turn.tool_use_count</span><span class="sh-val">0</span></div>
+        <!-- Tool invocations: inline chips row -->
+        <div class="span-tools">
+          <div class="span-tool-chip span-tool-chip--success">
+            <span class="span-tool-chip__name">bash</span>
+            <span class="span-tool-chip__duration">47ms</span>
+          </div>
+          <div class="span-tool-chip span-tool-chip--success">
+            <span class="span-tool-chip__name">read_file</span>
+            <span class="span-tool-chip__duration">12ms</span>
+          </div>
         </div>
-      )}
-      <div class="sh-timing-bar sh-timing-turn"></div>
+
+        <div class="span-card__timing">
+          <div class="timing-bar timing-bar--turn"></div>
+        </div>
+      </div>
+
+      <!-- Turn 1: ERROR, FileNotFoundError -->
+      <div class="span-card span-card--turn span-card--error">
+        <div class="span-card__header">
+          <div class="span-card__title">
+            <span class="md-chip md-chip--neutral">SPAN</span>
+            <span class="span-card__name">claude.turn</span>
+            <span class="span-card__index">#1</span>
+          </div>
+          <div class="span-card__meta">
+            <span class="md-chip md-chip--error">ERROR</span>
+            <span class="span-card__duration">8ms</span>
+          </div>
+        </div>
+
+        {showAttributes && (
+          <div class="span-card__attrs">
+            <div class="span-attr">
+              <span class="span-attr__key">stop_reason</span>
+              <span class="span-attr__value span-attr__value--string">"tool_use"</span>
+            </div>
+          </div>
+        )}
+
+        <!-- Tool invocations: error chip -->
+        <div class="span-tools">
+          <div class="span-tool-chip span-tool-chip--error">
+            <span class="span-tool-chip__name">bash</span>
+            <span class="span-tool-chip__duration">8ms</span>
+            <span class="span-tool-chip__status">FileNotFoundError</span>
+          </div>
+        </div>
+
+        <div class="span-card__timing">
+          <div class="timing-bar timing-bar--error"></div>
+        </div>
+      </div>
+
+      <!-- Turn 2: OK, end_turn, no tools -->
+      <div class="span-card span-card--turn">
+        <div class="span-card__header">
+          <div class="span-card__title">
+            <span class="md-chip md-chip--neutral">SPAN</span>
+            <span class="span-card__name">claude.turn</span>
+            <span class="span-card__index">#2</span>
+          </div>
+          <div class="span-card__meta">
+            <span class="md-chip md-chip--success">OK</span>
+            <span class="span-card__duration">298ms</span>
+          </div>
+        </div>
+
+        {showAttributes && (
+          <div class="span-card__attrs">
+            <div class="span-attr">
+              <span class="span-attr__key">stop_reason</span>
+              <span class="span-attr__value span-attr__value--string">"end_turn"</span>
+            </div>
+            <div class="span-attr">
+              <span class="span-attr__key">tool_use_count</span>
+              <span class="span-attr__value span-attr__value--number">0</span>
+            </div>
+          </div>
+        )}
+
+        <div class="span-card__timing">
+          <div class="timing-bar timing-bar--turn"></div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
 
 <style>
+  /* Inherits Inter from body — no explicit font-family override */
   .span-hierarchy {
-    font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-    font-size: 0.8rem;
-    line-height: 1.5;
-    margin: 1.5rem 0;
-    overflow-x: auto;
+    padding: 16px 0;
+    margin: 24px 0;
   }
 
-  .sh-span {
-    border: 1px solid;
-    border-radius: 6px;
-    padding: 0.5rem 0.75rem;
-    margin: 0.4rem 0;
-    position: relative;
+  /* ---- Card base ---- */
+  .span-card {
+    background: var(--surface, #FFFFFF);
+    border-radius: 12px;
+    box-shadow: var(--dp2, 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.06));
+    overflow: hidden;
+    margin-bottom: 12px;
   }
 
-  .sh-session {
-    border-color: #0e9c8f;
-    background: #0e9c8f08;
+  .span-card--session {
+    border-left: 3px solid #5865F2;
   }
 
-  .sh-turn {
-    border-color: #3b82f6;
-    background: #3b82f608;
-    margin-left: 1.5rem;
+  .span-card--turn {
+    border-left: 3px solid #818CF8;
+    box-shadow: var(--dp1, 0 1px 2px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.1));
   }
 
-  .sh-tool {
-    border-color: #22c55e;
-    background: #22c55e08;
-    margin-left: 1.5rem;
+  .span-card--error {
+    border-left: 3px solid #EF4444;
   }
 
-  .sh-tool-error {
-    border-color: #ef4444;
-    background: #ef444408;
-  }
-
-  .sh-header {
+  /* ---- Header ---- */
+  .span-card__header {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border, #E2E8F0);
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .span-card__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .span-card__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .span-card__name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text, #0F172A);
+  }
+
+  .span-card__index {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748B);
+  }
+
+  .span-card__duration {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748B);
+    /* duration is a number — JetBrains Mono is acceptable for numeric data */
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  .span-card__cost {
+    font-size: 0.8rem;
+    color: var(--text-muted, #64748B);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  /* ---- Attributes ---- */
+  .span-card__attrs {
+    padding: 8px 16px;
+    display: flex;
+    gap: 16px;
     flex-wrap: wrap;
   }
 
-  .sh-kind {
-    font-size: 0.65rem;
-    padding: 0.1rem 0.3rem;
-    border-radius: 3px;
-    background: #1e293b;
-    color: #94a3b8;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .sh-name {
-    font-weight: 700;
-    color: #e2e8f0;
-  }
-
-  .sh-index {
-    color: #94a3b8;
-    font-size: 0.75rem;
-  }
-
-  .sh-status {
-    font-size: 0.65rem;
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  .sh-ok {
-    background: #22c55e20;
-    color: #22c55e;
-  }
-
-  .sh-error {
-    background: #ef444420;
-    color: #ef4444;
-  }
-
-  .sh-attrs {
-    margin-top: 0.4rem;
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.1rem;
-  }
-
-  .sh-attr {
+  .span-attr {
     display: flex;
-    gap: 0.5rem;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .span-attr__key {
+    font-size: 0.8rem;
+    color: var(--accent, #5865F2);
+    font-weight: 500;
+    /* NOT monospace — inherits Inter */
+  }
+
+  .span-attr__value {
+    font-size: 0.8rem;
+  }
+
+  .span-attr__value--string {
+    color: #16A34A;
+  }
+
+  :root[data-theme="dark"] .span-attr__value--string {
+    color: #4ADE80;
+  }
+
+  .span-attr__value--number {
+    color: #D97706;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :root[data-theme="dark"] .span-attr__value--number {
+    color: #FCD34D;
+  }
+
+  /* ---- Tool chips row ---- */
+  .span-tools {
+    padding: 8px 16px 12px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .span-tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    border-radius: 100px;
+    font-size: 0.8rem;
+    box-shadow: var(--dp1, 0 1px 2px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.1));
+  }
+
+  .span-tool-chip--success {
+    background: #DCFCE7;
+    color: #166534;
+  }
+
+  :root[data-theme="dark"] .span-tool-chip--success {
+    background: rgba(20, 83, 45, 0.3);
+    color: #4ADE80;
+  }
+
+  .span-tool-chip--error {
+    background: #FEE2E2;
+    color: #DC2626;
+  }
+
+  :root[data-theme="dark"] .span-tool-chip--error {
+    background: rgba(127, 29, 29, 0.3);
+    color: #F87171;
+  }
+
+  .span-tool-chip__name {
+    font-weight: 600;
+  }
+
+  .span-tool-chip__duration {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    opacity: 0.8;
+  }
+
+  .span-tool-chip__status {
     font-size: 0.75rem;
-    padding: 0.05rem 0;
+    opacity: 0.85;
   }
 
-  .sh-key {
-    color: #7dd3fc;
-    flex-shrink: 0;
+  /* ---- Timing bars ---- */
+  .span-card__timing {
+    padding: 0 16px 4px;
   }
 
-  .sh-val {
-    color: #86efac;
-  }
-
-  .sh-val-error {
-    color: #fca5a5;
-  }
-
-  .sh-timing-bar {
+  .timing-bar {
     height: 3px;
     border-radius: 2px;
-    margin-top: 0.5rem;
-    opacity: 0.6;
   }
 
-  .sh-timing-session { background: #0e9c8f; width: 100%; }
-  .sh-timing-turn { background: #3b82f6; width: 70%; }
-  .sh-timing-tool { background: #22c55e; width: 30%; }
+  .timing-bar--session {
+    background: #5865F2;
+    width: 100%;
+  }
+
+  .timing-bar--turn {
+    background: #818CF8;
+    width: 70%;
+  }
+
+  .timing-bar--error {
+    background: #EF4444;
+    width: 20%;
+  }
+
+  /* ---- Children container (turns inside session) ---- */
+  .span-children {
+    padding: 0 12px 12px 12px;
+  }
+
+  /* Ensure the md-chip inherits Inter, not system monospace */
+  .md-chip {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  }
 </style>

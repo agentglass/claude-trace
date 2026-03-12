@@ -16,6 +16,7 @@ hero:
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
+import SpanHierarchy from '../../components/SpanHierarchy.astro';
 
 ## Why claude-trace?
 
@@ -72,46 +73,7 @@ That's it. No configuration required. Spans are exported via whatever `TracerPro
 
 Every agent execution produces a tree of structured spans:
 
-```
-claude.session  [root span]
-│  claude.session.id          = "sess_01HV2Y3K8P9Q0R1S2T3U4V5W6X"
-│  claude.session.customer_id = "acme"
-│  claude.session.model       = "claude-sonnet-4-6"
-│  claude.session.total_turns = 3
-│  claude.session.total_cost_usd = "0.04523"
-│  claude.cost.total_usd      = "0.04523"
-│
-├── claude.turn  [turn_index=0]
-│   │  claude.turn.stop_reason  = "tool_use"
-│   │  claude.turn.input_tokens = 1204
-│   │  claude.turn.output_tokens = 312
-│   │  claude.turn.latency_ms   = 841.3
-│   │  claude.turn.cost_usd     = "0.00723"
-│   │
-│   ├── claude.tool  [bash_0]
-│   │      claude.tool.name         = "bash"
-│   │      claude.tool.use_id       = "toolu_01A2B3C4D5E6F7G8H9I0J1K2"
-│   │      claude.tool.input_hash   = "a3f2b8c1d4e5f6a7"
-│   │      claude.tool.input_size_bytes = 48
-│   │      claude.tool.latency_ms   = 47.2
-│   │      claude.tool.status       = "success"
-│   │
-│   └── claude.tool  [read_file_0]
-│          claude.tool.name         = "read_file"
-│          claude.tool.status       = "success"
-│          claude.tool.is_parallel  = true
-│
-├── claude.turn  [turn_index=1]
-│   │  claude.turn.stop_reason  = "tool_use"
-│   └── claude.tool  [bash_1]
-│          claude.tool.status  = "error"
-│          claude.tool.error_type = "FileNotFoundError"
-│
-└── claude.turn  [turn_index=2]
-       claude.turn.stop_reason    = "end_turn"
-       claude.turn.tool_use_count = 0
-       claude.turn.latency_ms     = 623.1
-```
+<SpanHierarchy />
 
 Every attribute follows the `claude.{category}.{name}` naming convention — see the full [Semantic Conventions reference](/reference/semconv/).
 
