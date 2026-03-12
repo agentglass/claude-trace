@@ -1,1 +1,10 @@
 target/
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.dylib
+*.dSYM/
+dist/
+*.egg-info/
+.venv/

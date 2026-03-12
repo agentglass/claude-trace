@@ -1,23 +1,24 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
 
 [project]
 name = "claude-trace"
 version = "0.1.0"
 description = "Zero-configuration OpenTelemetry observability for Claude Agent SDK"
 readme = "README.md"
-license = {text = "MIT"}
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
-authors = [{name = "claude-trace contributors"}]
+authors = [{ name = "agentglass contributors" }]
 keywords = ["anthropic", "claude", "opentelemetry", "observability", "agents", "tracing"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
     "Topic :: System :: Monitoring",
 ]
 dependencies = [
@@ -32,20 +33,20 @@ dev = [
     "pytest-asyncio>=0.23",
     "mypy>=1.9",
     "ruff>=0.4",
+    "maturin>=1.9",
     "opentelemetry-exporter-otlp>=1.25.0",
-    "rich>=13.0",
 ]
-console = ["rich>=13.0"]
-otlp = ["opentelemetry-exporter-otlp>=1.25.0"]
 
 [project.urls]
-Homepage = "https://github.com/claude-trace/claude-trace"
-Documentation = "https://claude-trace.readthedocs.io"
-Repository = "https://github.com/claude-trace/claude-trace"
-Issues = "https://github.com/claude-trace/claude-trace/issues"
+Homepage = "https://github.com/agentglass/claude-trace"
+Documentation = "https://agentglass.dev/claude-trace"
+Repository = "https://github.com/agentglass/claude-trace"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/claude_trace"]
+[tool.maturin]
+python-source = "python"
+module-name = "claude_trace._claude_trace_core"
+features = ["python"]
+bindings = "pyo3"
 
 [tool.ruff]
 line-length = 100
@@ -61,4 +62,4 @@ python_version = "3.11"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["python/tests"]

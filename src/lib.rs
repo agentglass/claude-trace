@@ -30,3 +30,14 @@ pub mod spans;
 
 #[cfg(feature = "python")]
 pub mod python;
+
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+#[cfg(feature = "python")]
+#[pymodule(gil_used = false)]
+fn _claude_trace_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    python::register(m)?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    Ok(())
+}
