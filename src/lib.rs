@@ -25,7 +25,11 @@
 pub mod cost;
 pub mod diff;
 pub mod errors;
+
+#[cfg(feature = "otel")]
 pub mod semconv;
+
+#[cfg(feature = "otel")]
 pub mod spans;
 
 #[cfg(feature = "python")]
