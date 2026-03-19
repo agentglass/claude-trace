@@ -1,0 +1,320 @@
+---
+title: Claude Code Hook Integration
+description: Automatically trace every tool Claude Code executes using PreToolUse / PostToolUse hooks.
+---
+
+import { Card, CardGrid, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+When you install the claude-trace plugin into a Claude Code project, every tool Claude Code executes
+is **automatically traced as an OTel span** — with no changes to your code and no decorators to add.
+
+This page explains how the hook system works and how to configure it.
+
+## How It Works
+
+Claude Code fires **PreToolUse** and **PostToolUse** hook events for every tool invocation
+(Write, Read, Bash, Edit, Glob, Grep, …). The claude-trace plugin registers lightweight Python
+commands that turn each event pair into a completed `claude.tool.invocation` OpenTelemetry span.
+
+<div class="hook-flow">
+  <div class="hook-flow__step hook-flow__step--pre">
+    <div class="hook-flow__label">PreToolUse</div>
+    <div class="hook-flow__arrow">↓</div>
+    <div class="hook-flow__cmd">python -m claude_trace.hooks pre</div>
+    <div class="hook-flow__detail">Generates W3C trace ID + span ID<br/>Records start timestamp<br/>Writes state file (0o600)</div>
+  </div>
+  <div class="hook-flow__middle">
+    <div class="hook-flow__tool-box">Tool Executes</div>
+  </div>
+  <div class="hook-flow__step hook-flow__step--post">
+    <div class="hook-flow__label">PostToolUse</div>
+    <div class="hook-flow__arrow">↓</div>
+    <div class="hook-flow__cmd">python -m claude_trace.hooks post</div>
+    <div class="hook-flow__detail">Reads state file<br/>Calculates duration<br/>Exports span via OTLP HTTP<br/>Deletes state file</div>
+  </div>
+</div>
+
+<style>{`
+.hook-flow {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 16px;
+  align-items: center;
+  margin: 24px 0;
+}
+.hook-flow__step {
+  background: var(--surface-1, #f8fafc);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+}
+.hook-flow__step--pre { border-top: 3px solid #5865F2; }
+.hook-flow__step--post { border-top: 3px solid #22c55e; }
+.hook-flow__label { font-weight: 700; font-size: 0.85rem; letter-spacing: 0.05em; margin-bottom: 4px; }
+.hook-flow__step--pre .hook-flow__label { color: #5865F2; }
+.hook-flow__step--post .hook-flow__label { color: #22c55e; }
+.hook-flow__arrow { font-size: 1.2rem; color: #64748b; margin: 4px 0; }
+.hook-flow__cmd { font-family: var(--font-mono, monospace); font-size: 0.78rem; background: #e2e8f0; padding: 6px 10px; border-radius: 6px; margin: 8px 0; }
+.hook-flow__detail { font-size: 0.8rem; color: #64748b; line-height: 1.6; }
+.hook-flow__middle { display: flex; align-items: center; justify-content: center; }
+.hook-flow__tool-box {
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 16px rgba(88,101,242,0.25);
+  text-align: center;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .hook-flow { grid-template-columns: 1fr; }
+  .hook-flow__middle { transform: rotate(90deg); }
+}
+`}</style>
+
+## Span Reference
+
+Every tool invocation produces a `claude.tool.invocation` span with these attributes:
+
+<div class="attr-table">
+  <div class="attr-row attr-row--header">
+    <span>Attribute</span><span>Type</span><span>Description</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.name</code><span>string</span><span>Tool name (Write, Bash, Read, …)</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.input_hash</code><span>string</span><span>SHA-256[:16] of tool input — never the raw input</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.output_hash</code><span>string</span><span>SHA-256[:16] of tool output — never the raw output</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.duration_ms</code><span>float</span><span>Wall-clock execution time in milliseconds</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.outcome</code><span>string</span><span>"success" or truncated error message (≤128 chars)</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.session_id</code><span>string</span><span>Claude Code session identifier</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.hook_source</code><span>string</span><span>Always "claude_code_plugin"</span>
+  </div>
+  <div class="attr-row">
+    <code>claude.tool.plugin_version</code><span>string</span><span>claude-trace plugin version</span>
+  </div>
+</div>
+
+<style>{`
+.attr-table { border-radius: 10px; overflow: hidden; border: 1px solid #e2e8f0; margin: 16px 0; }
+.attr-row { display: grid; grid-template-columns: 2fr 1fr 3fr; gap: 0; padding: 10px 16px; border-bottom: 1px solid #f1f5f9; font-size: 0.85rem; }
+.attr-row:last-child { border-bottom: none; }
+.attr-row--header { background: #0f172a; color: #f8fafc; font-weight: 700; font-size: 0.75rem; letter-spacing: 0.05em; }
+.attr-row:not(.attr-row--header):hover { background: #f8fafc; }
+.attr-row code { font-size: 0.8rem; color: #5865F2; }
+`}</style>
+
+## Quick Setup
+
+### 1. Install the plugin
+
+```bash
+# From the claude-trace repo root
+claude plugin install .
+
+# Or from the registry (when published)
+claude plugin install claude-trace
+```
+
+### 2. Set your OTLP endpoint
+
+```bash
+# Jaeger all-in-one (local dev)
+docker run -p 4318:4318 -p 16686:16686 jaegertracing/all-in-one:latest
+
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+### 3. Start a Claude Code session
+
+Open any project with Claude Code. Every tool call is now traced automatically:
+
+```
+🔍 Open Jaeger at http://localhost:16686
+   Service: claude-code
+   Spans:   claude.tool.invocation
+```
+
+## Configuration
+
+<Tabs>
+  <TabItem label="Environment Variables">
+    ```bash
+    # OTLP collector endpoint (default: http://localhost:4318)
+    export OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
+
+    # Fallback NDJSON log when no collector is running
+    export CLAUDE_TRACE_HOOKS_LOG=/tmp/claude-tool-spans.ndjson
+
+    # Maximum characters per span attribute (default: 512)
+    export CLAUDE_TRACE_MAX_ATTR_LENGTH=256
+
+    # Strip all text attributes for maximum privacy
+    export CLAUDE_TRACE_SANITIZE=true
+
+    # Custom state directory (default: /tmp/claude-trace)
+    export CLAUDE_TRACE_STATE_DIR=/run/user/1000/claude-trace
+    ```
+  </TabItem>
+  <TabItem label="Backends">
+    | Backend | Endpoint | Auth |
+    |---|---|---|
+    | Jaeger | `http://localhost:4318` | None |
+    | Grafana Tempo | `http://tempo:4318` | None |
+    | Honeycomb | `https://api.honeycomb.io` | `x-honeycomb-team` header |
+    | Datadog | `http://localhost:4318` | DD Agent |
+    | AWS X-Ray | Via ADOT collector | IAM |
+  </TabItem>
+</Tabs>
+
+## Trace Viewer
+
+Once spans flow into Jaeger or Grafana Tempo, you can see the full tool execution
+timeline for a Claude Code session:
+
+<div class="trace-preview">
+  <div class="trace-preview__header">
+    <span class="trace-preview__service">claude-code</span>
+    <span class="trace-preview__duration">14 spans · 8.4s</span>
+  </div>
+  <div class="trace-preview__spans">
+    <div class="trace-preview__span trace-preview__span--root">
+      <span class="trace-preview__name">claude.tool.invocation</span>
+      <span class="trace-preview__tool">Write</span>
+      <span class="trace-preview__ms">42ms</span>
+    </div>
+    <div class="trace-preview__span">
+      <span class="trace-preview__name">claude.tool.invocation</span>
+      <span class="trace-preview__tool">Bash (cargo test)</span>
+      <span class="trace-preview__ms">3.2s</span>
+    </div>
+    <div class="trace-preview__span">
+      <span class="trace-preview__name">claude.tool.invocation</span>
+      <span class="trace-preview__tool">Read</span>
+      <span class="trace-preview__ms">5ms</span>
+    </div>
+    <div class="trace-preview__span">
+      <span class="trace-preview__name">claude.tool.invocation</span>
+      <span class="trace-preview__tool">Edit</span>
+      <span class="trace-preview__ms">12ms</span>
+    </div>
+  </div>
+</div>
+
+<style>{`
+.trace-preview {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  margin: 24px 0;
+  font-family: var(--font-mono, monospace);
+}
+.trace-preview__header {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+.trace-preview__service { color: #5865F2; font-weight: 700; }
+.trace-preview__duration { color: #94a3b8; }
+.trace-preview__spans { background: #f8fafc; }
+.trace-preview__span {
+  display: grid;
+  grid-template-columns: 2fr 2fr 1fr;
+  padding: 10px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.8rem;
+  transition: background 0.15s;
+}
+.trace-preview__span:last-child { border-bottom: none; }
+.trace-preview__span:hover { background: #f1f5f9; }
+.trace-preview__span--root { background: rgba(88,101,242,0.04); }
+.trace-preview__name { color: #5865F2; }
+.trace-preview__tool { color: #0f172a; font-weight: 600; }
+.trace-preview__ms { color: #64748b; text-align: right; }
+`}</style>
+
+## Privacy & Security
+
+<Aside type="caution" title="What is and isn't stored">
+  claude-trace hooks **never** store the raw content of tool inputs or outputs.
+  Only the SHA-256 hash (first 16 hex characters) is recorded. This lets you
+  correlate invocations across runs without ever capturing file contents, shell
+  commands, or code diffs.
+</Aside>
+
+| Data | Stored? |
+|---|---|
+| Tool name | ✅ Yes |
+| Tool input content | ❌ Never — hash only |
+| Tool output content | ❌ Never — hash only |
+| Duration | ✅ Yes |
+| Outcome (success/error) | ✅ Yes |
+| Error message | ✅ Truncated to 128 chars, API keys redacted |
+| Claude Code session ID | ✅ Yes |
+
+### State File Security
+
+State files written by the pre-hook use permission mode `0o600` (owner read/write only).
+The state directory (`/tmp/claude-trace/`) is also created with `0o700`.
+On Linux, `/tmp` is typically world-readable, so you can override the directory:
+
+```bash
+export CLAUDE_TRACE_STATE_DIR=/run/user/$UID/claude-trace
+```
+
+## Debugging
+
+### No spans in Jaeger?
+
+```bash
+# 1. Check if hooks are firing
+export CLAUDE_TRACE_HOOKS_LOG=/tmp/hook-debug.ndjson
+
+# 2. Manually simulate a pre/post pair
+echo '{"session_id":"test","tool_name":"Write","tool_input":{"f":"x"}}' \
+  | python -m claude_trace.hooks pre
+
+echo '{"session_id":"test","tool_name":"Write","tool_response":"ok"}' \
+  | python -m claude_trace.hooks post
+
+# 3. Check the fallback log
+cat /tmp/hook-debug.ndjson | python -m json.tool
+```
+
+### Verify OTLP connectivity
+
+```bash
+curl -X POST http://localhost:4318/v1/traces \
+  -H 'Content-Type: application/json' \
+  -d '{"resourceSpans":[]}'
+# Expected: 200 OK with {"partialSuccess":{}}
+```
+
+## Under the Hood
+
+The hooks are implemented in `python/claude_trace/_hooks.py` (core logic) and
+`python/claude_trace/_hooks_cli.py` (CLI entry point). The OTLP exporter uses
+only Python standard library (`urllib.request`) — no extra dependencies.
+
+State correlation between pre/post hooks uses the filesystem:
+- **Pre-hook** writes `{state_dir}/{session_id}/{tool_name}.json`
+- **Post-hook** reads, exports, then deletes that file
+
+This is safe for sequential tool execution (Claude Code's default behaviour).
+If you need concurrent tool support, open a [GitHub discussion](https://github.com/agentglass/claude-trace/discussions).

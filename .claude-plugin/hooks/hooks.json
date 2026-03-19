@@ -9,6 +9,16 @@
           "timeout": 30
         }
       ]
+    },
+    {
+      "matcher": ".*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m claude_trace.hooks pre",
+          "timeout": 5
+        }
+      ]
     }
   ],
   "PostToolUse": [
@@ -29,6 +39,16 @@
           "type": "command",
           "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/coverage-gate.sh",
           "timeout": 120
+        }
+      ]
+    },
+    {
+      "matcher": ".*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m claude_trace.hooks post",
+          "timeout": 5
         }
       ]
     }

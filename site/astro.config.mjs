@@ -29,6 +29,7 @@ export default defineConfig({
           label: "Guides",
           items: [
             { label: "Python Integration", link: "/guides/python/" },
+            { label: "Claude Code Hooks", link: "/guides/claude-code-hooks/" },
             { label: "Security & Privacy", link: "/guides/security/" },
             { label: "Cost Attribution", link: "/guides/cost-attribution/" },
             { label: "Trace Diffing", link: "/guides/trace-diff/" },

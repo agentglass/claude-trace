@@ -37,6 +37,9 @@ dev = [
     "opentelemetry-exporter-otlp>=1.25.0",
 ]
 
+[project.scripts]
+"claude-trace-hooks" = "claude_trace._hooks_cli:main"
+
 [project.urls]
 Homepage = "https://github.com/agentglass/claude-trace"
 Documentation = "https://agentglass.dev/claude-trace"
